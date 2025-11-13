@@ -526,7 +526,7 @@ elif menu == "📊 Dashboard":
             st.info("📋 Nenhum pedido para analisar")
 
 # =========================================
-# 👕 PÁGINA: FARDAMENTOS
+# 👕 PÁGINA: FARDAMENTOS (CORRIGIDA)
 # =========================================
 
 elif menu == "👕 Fardamentos":
@@ -546,91 +546,51 @@ elif menu == "👕 Fardamentos":
                 quantidade = st.number_input("Quantidade*", min_value=0, value=0)
             
             with col2:
-                categoria = st.selectbox("Categoria", ["Camiseta", "Calça", "Agasalho", "Acessório", "Outro"])
-                responsavel = st.text_input("Responsável")
+                categoria = st.selectbox("Categoria*", ["Camiseta", "Camiseta Regata", "Calça", "Short", "Short Saia"])
+                escola = st.selectbox("Escola*", st.session_state.escolas)
                 observacoes = st.text_area("Observações")
             
-            if st.form_submit_button("💾 Salvar Fardamento"):
-                if nome and tamanho and quantidade >= 0:
-                    if SUPABASE_DISPONIVEL:
-                        # Salvar no Supabase
-                        sucesso = salvar_fardamento(
-                            nome=nome,
-                            tamanho=tamanho,
-                            quantidade=quantidade,
-                            categoria=categoria,
-                            responsavel=responsavel,
-                            observacoes=observacoes
-                        )
-                        if sucesso:
-                            st.rerun()
-                    else:
-                        # Salvar localmente
-                        novo_fardamento = {
-                            'id': len(st.session_state.produtos) + 1,
-                            'nome': nome,
-                            'tamanho': tamanho,
-                            'quantidade': quantidade,
-                            'categoria': categoria,
-                            'responsavel': responsavel,
-                            'observacoes': observacoes,
-                            'data_cadastro': datetime.now().strftime("%d/%m/%Y %H:%M")
-                        }
-                        st.session_state.produtos.append(novo_fardamento)
-                        salvar_dados()
-                        st.success("✅ Fardamento cadastrado localmente!")
-                        st.rerun()
+            submitted = st.form_submit_button("💾 Salvar Fardamento")
+            if submitted:
+                if nome and tamanho and quantidade >= 0 and categoria and escola:
+                    salvar_fardamento(
+                        nome=nome,
+                        tamanho=tamanho,
+                        quantidade=quantidade,
+                        categoria=categoria,
+                        escola=escola,
+                        observacoes=observacoes
+                    )
+                    st.rerun()
                 else:
                     st.error("❌ Preencha todos os campos obrigatórios!")
     
     with tab2:
         st.subheader("📋 Fardamentos Cadastrados")
         
-        if SUPABASE_DISPONIVEL:
-            try:
-                fardamentos_df = buscar_fardamentos()
-                if not fardamentos_df.empty:
-                    st.dataframe(fardamentos_df, use_container_width=True)
-                    
-                    # Estatísticas
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.metric("Total de Fardamentos", len(fardamentos_df))
-                    with col2:
-                        st.metric("Total em Estoque", fardamentos_df['quantidade'].sum())
-                    with col3:
-                        baixo_estoque = len(fardamentos_df[fardamentos_df['quantidade'] < 5])
-                        st.metric("Baixo Estoque", baixo_estoque)
-                else:
-                    st.info("📋 Nenhum fardamento cadastrado no Supabase")
-            except Exception as e:
-                st.error(f"❌ Erro ao carregar fardamentos: {e}")
-                # Fallback para dados locais
-                if st.session_state.produtos:
-                    df_local = pd.DataFrame(st.session_state.produtos)
-                    st.dataframe(df_local, use_container_width=True)
-                else:
-                    st.info("📋 Nenhum fardamento cadastrado")
+        if st.session_state.produtos:
+            df_local = pd.DataFrame(st.session_state.produtos)
+            st.dataframe(df_local, use_container_width=True)
+            
+            # Estatísticas
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Total de Fardamentos", len(st.session_state.produtos))
+            with col2:
+                total_estoque = sum(p.get('quantidade', 0) for p in st.session_state.produtos)
+                st.metric("Total em Estoque", total_estoque)
+            with col3:
+                baixo_estoque = len([p for p in st.session_state.produtos if p.get('quantidade', 0) < 5])
+                st.metric("Baixo Estoque", baixo_estoque)
+            with col4:
+                # Fardamentos por escola
+                escolas_count = df_local['escola'].value_counts()
+                escola_mais = escolas_count.index[0] if not escolas_count.empty else "Nenhuma"
+                st.metric("Escola com Mais", escola_mais)
         else:
-            if st.session_state.produtos:
-                df_local = pd.DataFrame(st.session_state.produtos)
-                st.dataframe(df_local, use_container_width=True)
-                
-                # Estatísticas locais
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("Total de Fardamentos", len(st.session_state.produtos))
-                with col2:
-                    total_estoque = sum(p.get('quantidade', 0) for p in st.session_state.produtos)
-                    st.metric("Total em Estoque", total_estoque)
-                with col3:
-                    baixo_estoque = len([p for p in st.session_state.produtos if p.get('quantidade', 0) < 5])
-                    st.metric("Baixo Estoque", baixo_estoque)
-            else:
-                st.info("📋 Nenhum fardamento cadastrado")
-
+            st.info("📋 Nenhum fardamento cadastrado")
 # =========================================
-# 📦 PÁGINA: PEDIDOS
+# 📦 PÁGINA: PEDIDOS (CORRIGIDA)
 # =========================================
 
 elif menu == "📦 Pedidos":
@@ -641,51 +601,58 @@ elif menu == "📦 Pedidos":
     with tab1:
         st.subheader("➕ Novo Pedido")
         
-        with st.form("novo_pedido"):
-            col1, col2 = st.columns(2)
+        # Seção para adicionar itens (FORA do formulário principal)
+        st.subheader("👕 Adicionar Itens ao Pedido")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            item_nome = st.selectbox("Fardamento", ["Camiseta Básica", "Camiseta Regata", "Calça Jeans", "Short", "Short Saia"])
+        with col2:
+            item_tamanho = st.selectbox("Tamanho", todos_tamanhos)
+        with col3:
+            item_quantidade = st.number_input("Quantidade", min_value=1, value=1)
+        
+        if st.button("➕ Adicionar Item", key="add_item"):
+            novo_item = {
+                'nome': item_nome,
+                'tamanho': item_tamanho,
+                'quantidade': item_quantidade
+            }
+            st.session_state.itens_pedido.append(novo_item)
+            st.success(f"✅ {item_quantidade}x {item_nome} ({item_tamanho}) adicionado!")
+            st.rerun()
+        
+        # Mostrar itens adicionados
+        if st.session_state.itens_pedido:
+            st.subheader("📋 Itens no Pedido")
+            df_itens = pd.DataFrame(st.session_state.itens_pedido)
+            st.dataframe(df_itens, use_container_width=True)
             
+            total_itens = sum(item['quantidade'] for item in st.session_state.itens_pedido)
+            st.info(f"📦 Total de itens: {total_itens}")
+            
+            # Botão para limpar itens
+            if st.button("🗑️ Limpar Todos os Itens", type="secondary"):
+                st.session_state.itens_pedido = []
+                st.rerun()
+        
+        # Formulário principal do pedido
+        with st.form("novo_pedido"):
+            st.subheader("📝 Informações do Pedido")
+            
+            col1, col2 = st.columns(2)
             with col1:
                 cliente = st.text_input("Cliente*")
                 escola = st.selectbox("Escola*", st.session_state.escolas)
+            with col2:
                 data_entrega = st.date_input("Data de Entrega", min_value=date.today())
-            
-            with col2:
                 status = st.selectbox("Status", ["Pendente", "Em produção", "Pronto", "Entregue"])
-                observacoes = st.text_area("Observações")
             
-            st.subheader("👕 Itens do Pedido")
+            observacoes = st.text_area("Observações do Pedido")
             
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                item_nome = st.selectbox("Fardamento", ["Camiseta Básica", "Calça Jeans", "Agasalho", "Bermuda"])
-            with col2:
-                item_tamanho = st.selectbox("Tamanho", todos_tamanhos)
-            with col3:
-                item_quantidade = st.number_input("Quantidade", min_value=1, value=1)
-            
-            if st.button("➕ Adicionar Item"):
-                novo_item = {
-                    'nome': item_nome,
-                    'tamanho': item_tamanho,
-                    'quantidade': item_quantidade
-                }
-                st.session_state.itens_pedido.append(novo_item)
-                st.success(f"✅ {item_quantidade}x {item_nome} ({item_tamanho}) adicionado!")
-                st.rerun()
-            
-            # Mostrar itens adicionados
-            if st.session_state.itens_pedido:
-                st.subheader("📋 Itens no Pedido")
-                df_itens = pd.DataFrame(st.session_state.itens_pedido)
-                st.dataframe(df_itens, use_container_width=True)
-                
-                total_itens = sum(item['quantidade'] for item in st.session_state.itens_pedido)
-                st.info(f"📦 Total de itens: {total_itens}")
-            
-            if st.form_submit_button("💾 Salvar Pedido"):
+            submitted = st.form_submit_button("💾 Salvar Pedido")
+            if submitted:
                 if cliente and escola and st.session_state.itens_pedido:
                     novo_pedido = {
-                        'id': len(st.session_state.pedidos) + 1,
                         'cliente': cliente,
                         'escola': escola,
                         'data_pedido': datetime.now().strftime("%d/%m/%Y %H:%M"),
@@ -696,16 +663,8 @@ elif menu == "📦 Pedidos":
                         'total_itens': total_itens
                     }
                     
-                    if SUPABASE_DISPONIVEL:
-                        sucesso = salvar_pedido(novo_pedido)
-                        if sucesso:
-                            st.session_state.itens_pedido = []
-                            st.rerun()
-                    else:
-                        st.session_state.pedidos.append(novo_pedido)
+                    if salvar_pedido(novo_pedido):
                         st.session_state.itens_pedido = []
-                        salvar_dados()
-                        st.success("✅ Pedido salvo localmente!")
                         st.rerun()
                 else:
                     st.error("❌ Preencha cliente, escola e adicione itens!")
@@ -713,27 +672,22 @@ elif menu == "📦 Pedidos":
     with tab2:
         st.subheader("📋 Pedidos Cadastrados")
         
-        if SUPABASE_DISPONIVEL:
-            try:
-                pedidos_df = buscar_pedidos()
-                if not pedidos_df.empty:
-                    st.dataframe(pedidos_df, use_container_width=True)
-                else:
-                    st.info("📋 Nenhum pedido cadastrado no Supabase")
-            except Exception as e:
-                st.error(f"❌ Erro ao carregar pedidos: {e}")
-                if st.session_state.pedidos:
-                    df_local = pd.DataFrame(st.session_state.pedidos)
-                    st.dataframe(df_local, use_container_width=True)
-                else:
-                    st.info("📋 Nenhum pedido cadastrado")
+        if st.session_state.pedidos:
+            df_local = pd.DataFrame(st.session_state.pedidos)
+            st.dataframe(df_local, use_container_width=True)
+            
+            # Estatísticas de pedidos
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Total de Pedidos", len(st.session_state.pedidos))
+            with col2:
+                pedidos_pendentes = len([p for p in st.session_state.pedidos if p.get('status') == 'Pendente'])
+                st.metric("Pedidos Pendentes", pedidos_pendentes)
+            with col3:
+                total_itens_pedidos = sum(p.get('total_itens', 0) for p in st.session_state.pedidos)
+                st.metric("Total de Itens", total_itens_pedidos)
         else:
-            if st.session_state.pedidos:
-                df_local = pd.DataFrame(st.session_state.pedidos)
-                st.dataframe(df_local, use_container_width=True)
-            else:
-                st.info("📋 Nenhum pedido cadastrado")
-
+            st.info("📋 Nenhum pedido cadastrado")
 # =========================================
 # 👥 PÁGINA: CLIENTES
 # =========================================
