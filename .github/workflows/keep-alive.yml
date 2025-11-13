@@ -1,0 +1,41 @@
+name: 🚀 Manter App Streamlit Ativo
+
+on:
+  schedule:
+    # ⏰ EXECUTA A CADA 8 HORAS (3x AO DIA)
+    - cron: '0 */8 * * *'  # 00:00, 08:00, 16:00 UTC
+  workflow_dispatch:        # ✅ PERMITE EXECUÇÃO MANUAL
+
+jobs:
+  keep-app-alive:
+    runs-on: ubuntu-latest
+    name: 🔄 Fazer ping no app Streamlit
+    steps:
+      - name: 📡 Fazer requisição para o app
+        run: |
+          echo "🕒 Iniciando ping em $(date)"
+          
+          # 🔧 SUBSTITUA PELA URL REAL DO SEU APP STREAMLIT
+          APP_URL="https://sistema-fardamentos-u7rrptsdvva9tuznetaufa.streamlit.app/"
+          
+          # Faz a requisição e captura o status
+          STATUS_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$APP_URL")
+          
+          # Verifica se a requisição foi bem-sucedida
+          if [ "$STATUS_CODE" -eq 200 ]; then
+            echo "✅ SUCCESS: App respondendo normalmente (Status: $STATUS_CODE)"
+            echo "🌐 URL: $APP_URL"
+            echo "⏰ Horário: $(date)"
+          else
+            echo "⚠️  AVISO: App retornou status $STATUS_CODE"
+            echo "🔗 URL: $APP_URL"
+            echo "🕒 Horário: $(date)"
+          fi
+          
+          echo "🎯 Ping concluído em $(date)"
+
+      - name: 📊 Registrar execução
+        run: |
+          echo "🔄 GitHub Actions executado com sucesso!"
+          echo "📅 Próxima execução: em 8 horas"
+          echo "💡 Dica: Acesse manualmente o app para maior eficácia"
