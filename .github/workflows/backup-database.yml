@@ -1,0 +1,57 @@
+name: 💾 Backup Automático do Banco de Dados
+
+on:
+  schedule:
+    - cron: '0 */4 * * *'  # 🔄 BACKUP A CADA 4 HORAS
+  push:
+    paths:
+      - 'data/**'          # 📁 Backup quando arquivos na pasta data mudarem
+  workflow_dispatch:        # 🚀 EXECUÇÃO MANUAL
+
+jobs:
+  backup-database:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Baixar código
+        uses: actions/checkout@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: 🔍 Verificar mudanças nos dados
+        id: check-changes
+        run: |
+          git add data/
+          if git diff --staged --quiet; then
+            echo "📊 Nenhuma mudança nos dados detectada"
+            echo "changes=false" >> $GITHUB_OUTPUT
+          else
+            echo "🔄 Mudanças detectadas nos dados - fazendo backup"
+            echo "changes=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: 💾 Fazer backup dos dados
+        if: steps.check-changes.outputs.changes == 'true'
+        run: |
+          echo "🕒 Iniciando backup em $(date)"
+          
+          # Configurar git
+          git config --local user.email "actions@github.com"
+          git config --local user.name "GitHub Actions"
+          
+          # Fazer commit das mudanças
+          git add data/
+          git commit -m "💾 Backup automático - $(date +'%d/%m/%Y %H:%M')"
+          
+          # Fazer push
+          git push
+          
+          echo "✅ Backup concluído com sucesso!"
+          echo "📁 Arquivos backup: data/"
+          echo "⏰ Horário: $(date)"
+
+      - name: 📋 Status do backup
+        run: |
+          echo "🔔 Sistema de Backup Ativo"
+          echo "⏰ Próximo backup automático: em 4 horas"
+          echo "📊 Backup manual: Clique em 'Run workflow'"
+          echo "📁 Pasta monitorada: data/"
