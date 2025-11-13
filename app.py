@@ -22,12 +22,16 @@ try:
     SUPABASE_DISPONIVEL = True
 except Exception as e:
     SUPABASE_DISPONIVEL = False
-    st.sidebar.warning(f"🗄️ Modo Local: {e}")
+    st.sidebar.warning(f"🗄️ Modo Local Ativo")
 
 # Verificar status do banco
 if SUPABASE_DISPONIVEL:
-    status, conectado = sistema_hibrido()
-    st.sidebar.info(status)
+    try:
+        status, conectado = sistema_hibrido()
+        st.sidebar.info(status)
+    except Exception as e:
+        st.sidebar.error(f"❌ Erro no Supabase: {e}")
+        SUPABASE_DISPONIVEL = False
 else:
     st.sidebar.warning("🗄️ Modo Local Ativo")
 
@@ -441,64 +445,28 @@ if menu == "⚙️ Configurações":
             st.write("💡 Dica: Para evitar hibernação, acesse o sistema regularmente")
 
 # =========================================
-# 📱 OUTRAS PÁGINAS DO SISTEMA 
+# 📊 DASHBOARD
 # =========================================
 
-# DASHBOARD
 elif menu == "📊 Dashboard":
     st.header("🎯 Métricas em Tempo Real")
     
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
-        # Usar Supabase se disponível, senão usar local
-        if SUPABASE_DISPONIVEL:
-            try:
-                pedidos_df = buscar_pedidos()
-                total_pedidos = len(pedidos_df) if not pedidos_df.empty else 0
-            except:
-                total_pedidos = len(st.session_state.pedidos)
-        else:
-            total_pedidos = len(st.session_state.pedidos)
+        total_pedidos = len(st.session_state.pedidos)
         st.metric("Total de Pedidos", total_pedidos)
     
     with col2:
-        if SUPABASE_DISPONIVEL:
-            try:
-                pedidos_df = buscar_pedidos()
-                if not pedidos_df.empty:
-                    pedidos_pendentes = len(pedidos_df[pedidos_df['status'] == 'Pendente'])
-                else:
-                    pedidos_pendentes = 0
-            except:
-                pedidos_pendentes = len([p for p in st.session_state.pedidos if p.get('status', 'Pendente') == 'Pendente'])
-        else:
-            pedidos_pendentes = len([p for p in st.session_state.pedidos if p.get('status', 'Pendente') == 'Pendente'])
+        pedidos_pendentes = len([p for p in st.session_state.pedidos if p.get('status', 'Pendente') == 'Pendente'])
         st.metric("Pedidos Pendentes", pedidos_pendentes)
     
     with col3:
-        if SUPABASE_DISPONIVEL:
-            try:
-                clientes_df = buscar_clientes()
-                clientes_ativos = len(clientes_df) if not clientes_df.empty else 0
-            except:
-                clientes_ativos = len(st.session_state.clientes)
-        else:
-            clientes_ativos = len(st.session_state.clientes)
+        clientes_ativos = len(st.session_state.clientes)
         st.metric("Clientes Ativos", clientes_ativos)
     
     with col4:
-        if SUPABASE_DISPONIVEL:
-            try:
-                fardamentos_df = buscar_fardamentos()
-                if not fardamentos_df.empty:
-                    produtos_baixo_estoque = len(fardamentos_df[fardamentos_df['quantidade'] < 5])
-                else:
-                    produtos_baixo_estoque = 0
-            except:
-                produtos_baixo_estoque = len([p for p in st.session_state.produtos if p.get('estoque', 0) < 5])
-        else:
-            produtos_baixo_estoque = len([p for p in st.session_state.produtos if p.get('estoque', 0) < 5])
+        produtos_baixo_estoque = len([p for p in st.session_state.produtos if p.get('quantidade', 0) < 5])
         st.metric("Alertas de Estoque", produtos_baixo_estoque, delta=-produtos_baixo_estoque)
     
     # Ações Rápidas
@@ -522,133 +490,53 @@ elif menu == "📊 Dashboard":
     
     # Alertas de Estoque
     st.header("⚠️ Alertas de Estoque")
+    produtos_alerta = [p for p in st.session_state.produtos if p.get('quantidade', 0) < 5]
     
-    if SUPABASE_DISPONIVEL:
-        try:
-            fardamentos_df = buscar_fardamentos()
-            if not fardamentos_df.empty:
-                produtos_alerta = fardamentos_df[fardamentos_df['quantidade'] < 5]
-                if not produtos_alerta.empty:
-                    for _, produto in produtos_alerta.iterrows():
-                        st.warning(f"🚨 {produto['nome']} - Tamanho: {produto.get('tamanho', 'N/A')} - Estoque: {produto.get('quantidade', 0)}")
-                else:
-                    st.success("✅ Nenhum alerta de estoque")
-            else:
-                st.info("📋 Nenhum fardamento cadastrado")
-        except:
-            produtos_alerta = [p for p in st.session_state.produtos if p.get('estoque', 0) < 5]
-            if produtos_alerta:
-                for produto in produtos_alerta:
-                    st.warning(f"🚨 {produto['nome']} - Tamanho: {produto.get('tamanho', 'N/A')} - Estoque: {produto.get('estoque', 0)}")
-            else:
-                st.success("✅ Nenhum alerta de estoque")
+    if produtos_alerta:
+        for produto in produtos_alerta:
+            st.warning(f"🚨 {produto['nome']} - Tamanho: {produto.get('tamanho', 'N/A')} - Estoque: {produto.get('quantidade', 0)}")
     else:
-        produtos_alerta = [p for p in st.session_state.produtos if p.get('estoque', 0) < 5]
-        if produtos_alerta:
-            for produto in produtos_alerta:
-                st.warning(f"🚨 {produto['nome']} - Tamanho: {produto.get('tamanho', 'N/A')} - Estoque: {produto.get('estoque', 0)}")
-        else:
-            st.success("✅ Nenhum alerta de estoque")
+        st.success("✅ Nenhum alerta de estoque")
     
     # Gráficos
     col1, col2 = st.columns(2)
     
     with col1:
         st.subheader("📈 Vendas por Escola")
-        if SUPABASE_DISPONIVEL:
-            try:
-                pedidos_df = buscar_pedidos()
-                if not pedidos_df.empty and 'escola' in pedidos_df.columns:
-                    escolas_data = pedidos_df['escola'].value_counts().to_dict()
-                    if escolas_data:
-                        df_escolas = pd.DataFrame(list(escolas_data.items()), columns=['Escola', 'Quantidade'])
-                        fig = px.bar(df_escolas, x='Escola', y='Quantidade', title="Vendas por Escola")
-                        st.plotly_chart(fig)
-                    else:
-                        st.info("📋 Nenhum dado para mostrar")
-                else:
-                    st.info("📋 Nenhum pedido cadastrado")
-            except:
-                if st.session_state.pedidos:
-                    escolas_data = {}
-                    for pedido in st.session_state.pedidos:
-                        escola = pedido.get('escola', 'N/A')
-                        escolas_data[escola] = escolas_data.get(escola, 0) + 1
-                    
-                    if escolas_data:
-                        df_escolas = pd.DataFrame(list(escolas_data.items()), columns=['Escola', 'Quantidade'])
-                        fig = px.bar(df_escolas, x='Escola', y='Quantidade', title="Vendas por Escola")
-                        st.plotly_chart(fig)
-                    else:
-                        st.info("📋 Nenhum dado para mostrar")
-                else:
-                    st.info("📋 Nenhum pedido cadastrado")
-        else:
-            if st.session_state.pedidos:
-                escolas_data = {}
-                for pedido in st.session_state.pedidos:
-                    escola = pedido.get('escola', 'N/A')
-                    escolas_data[escola] = escolas_data.get(escola, 0) + 1
-                
-                if escolas_data:
-                    df_escolas = pd.DataFrame(list(escolas_data.items()), columns=['Escola', 'Quantidade'])
-                    fig = px.bar(df_escolas, x='Escola', y='Quantidade', title="Vendas por Escola")
-                    st.plotly_chart(fig)
-                else:
-                    st.info("📋 Nenhum dado para mostrar")
+        if st.session_state.pedidos:
+            escolas_data = {}
+            for pedido in st.session_state.pedidos:
+                escola = pedido.get('escola', 'N/A')
+                escolas_data[escola] = escolas_data.get(escola, 0) + 1
+            
+            if escolas_data:
+                df_escolas = pd.DataFrame(list(escolas_data.items()), columns=['Escola', 'Quantidade'])
+                fig = px.bar(df_escolas, x='Escola', y='Quantidade', title="Vendas por Escola")
+                st.plotly_chart(fig)
             else:
-                st.info("📋 Nenhum pedido cadastrado")
+                st.info("📋 Nenhum dado para mostrar")
+        else:
+            st.info("📋 Nenhum pedido cadastrado")
     
     with col2:
         st.subheader("🎯 Status dos Pedidos")
-        if SUPABASE_DISPONIVEL:
-            try:
-                pedidos_df = buscar_pedidos()
-                if not pedidos_df.empty and 'status' in pedidos_df.columns:
-                    status_data = pedidos_df['status'].value_counts().to_dict()
-                    if status_data:
-                        df_status = pd.DataFrame(list(status_data.items()), columns=['Status', 'Quantidade'])
-                        fig = px.pie(df_status, values='Quantidade', names='Status', title="Status dos Pedidos")
-                        st.plotly_chart(fig)
-                    else:
-                        st.info("📋 Nenhum dado para mostrar")
-                else:
-                    st.info("📋 Nenhum pedido para analisar")
-            except:
-                if st.session_state.pedidos:
-                    status_data = {}
-                    for pedido in st.session_state.pedidos:
-                        status = pedido.get('status', 'Pendente')
-                        status_data[status] = status_data.get(status, 0) + 1
-                    
-                    if status_data:
-                        df_status = pd.DataFrame(list(status_data.items()), columns=['Status', 'Quantidade'])
-                        fig = px.pie(df_status, values='Quantidade', names='Status', title="Status dos Pedidos")
-                        st.plotly_chart(fig)
-                    else:
-                        st.info("📋 Nenhum dado para mostrar")
-                else:
-                    st.info("📋 Nenhum pedido para analisar")
-        else:
-            if st.session_state.pedidos:
-                status_data = {}
-                for pedido in st.session_state.pedidos:
-                    status = pedido.get('status', 'Pendente')
-                    status_data[status] = status_data.get(status, 0) + 1
-                
-                if status_data:
-                    df_status = pd.DataFrame(list(status_data.items()), columns=['Status', 'Quantidade'])
-                    fig = px.pie(df_status, values='Quantidade', names='Status', title="Status dos Pedidos")
-                    st.plotly_chart(fig)
-                else:
-                    st.info("📋 Nenhum dado para mostrar")
+        if st.session_state.pedidos:
+            status_data = {}
+            for pedido in st.session_state.pedidos:
+                status = pedido.get('status', 'Pendente')
+                status_data[status] = status_data.get(status, 0) + 1
+            
+            if status_data:
+                df_status = pd.DataFrame(list(status_data.items()), columns=['Status', 'Quantidade'])
+                fig = px.pie(df_status, values='Quantidade', names='Status', title="Status dos Pedidos")
+                st.plotly_chart(fig)
             else:
-                st.info("📋 Nenhum pedido para analisar")
-
-# ... (AS DEMAIS PÁGINAS MANTÊM SEU CÓDIGO ORIGINAL COM PEQUENAS ADAPTAÇÕES) ...
+                st.info("📋 Nenhum dado para mostrar")
+        else:
+            st.info("📋 Nenhum pedido para analisar")
 
 # =========================================
-# 👕 PÁGINA: FARDAMENTOS (ATUALIZADA)
+# 👕 PÁGINA: FARDAMENTOS
 # =========================================
 
 elif menu == "👕 Fardamentos":
@@ -752,6 +640,285 @@ elif menu == "👕 Fardamentos":
                 st.info("📋 Nenhum fardamento cadastrado")
 
 # =========================================
+# 📦 PÁGINA: PEDIDOS
+# =========================================
+
+elif menu == "📦 Pedidos":
+    st.header("📦 Gestão de Pedidos")
+    
+    tab1, tab2 = st.tabs(["➕ Novo Pedido", "📋 Pedidos Cadastrados"])
+    
+    with tab1:
+        st.subheader("➕ Novo Pedido")
+        
+        with st.form("novo_pedido"):
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                cliente = st.text_input("Cliente*")
+                escola = st.selectbox("Escola*", st.session_state.escolas)
+                data_entrega = st.date_input("Data de Entrega", min_value=date.today())
+            
+            with col2:
+                status = st.selectbox("Status", ["Pendente", "Em produção", "Pronto", "Entregue"])
+                observacoes = st.text_area("Observações")
+            
+            st.subheader("👕 Itens do Pedido")
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                item_nome = st.selectbox("Fardamento", ["Camiseta Básica", "Calça Jeans", "Agasalho", "Bermuda"])
+            with col2:
+                item_tamanho = st.selectbox("Tamanho", todos_tamanhos)
+            with col3:
+                item_quantidade = st.number_input("Quantidade", min_value=1, value=1)
+            
+            if st.button("➕ Adicionar Item"):
+                novo_item = {
+                    'nome': item_nome,
+                    'tamanho': item_tamanho,
+                    'quantidade': item_quantidade
+                }
+                st.session_state.itens_pedido.append(novo_item)
+                st.success(f"✅ {item_quantidade}x {item_nome} ({item_tamanho}) adicionado!")
+                st.rerun()
+            
+            # Mostrar itens adicionados
+            if st.session_state.itens_pedido:
+                st.subheader("📋 Itens no Pedido")
+                df_itens = pd.DataFrame(st.session_state.itens_pedido)
+                st.dataframe(df_itens, use_container_width=True)
+                
+                total_itens = sum(item['quantidade'] for item in st.session_state.itens_pedido)
+                st.info(f"📦 Total de itens: {total_itens}")
+            
+            if st.form_submit_button("💾 Salvar Pedido"):
+                if cliente and escola and st.session_state.itens_pedido:
+                    novo_pedido = {
+                        'id': len(st.session_state.pedidos) + 1,
+                        'cliente': cliente,
+                        'escola': escola,
+                        'data_pedido': datetime.now().strftime("%d/%m/%Y %H:%M"),
+                        'data_entrega': data_entrega.strftime("%d/%m/%Y"),
+                        'status': status,
+                        'itens': st.session_state.itens_pedido.copy(),
+                        'observacoes': observacoes,
+                        'total_itens': total_itens
+                    }
+                    
+                    if SUPABASE_DISPONIVEL:
+                        sucesso = salvar_pedido(novo_pedido)
+                        if sucesso:
+                            st.session_state.itens_pedido = []
+                            st.rerun()
+                    else:
+                        st.session_state.pedidos.append(novo_pedido)
+                        st.session_state.itens_pedido = []
+                        salvar_dados()
+                        st.success("✅ Pedido salvo localmente!")
+                        st.rerun()
+                else:
+                    st.error("❌ Preencha cliente, escola e adicione itens!")
+    
+    with tab2:
+        st.subheader("📋 Pedidos Cadastrados")
+        
+        if SUPABASE_DISPONIVEL:
+            try:
+                pedidos_df = buscar_pedidos()
+                if not pedidos_df.empty:
+                    st.dataframe(pedidos_df, use_container_width=True)
+                else:
+                    st.info("📋 Nenhum pedido cadastrado no Supabase")
+            except Exception as e:
+                st.error(f"❌ Erro ao carregar pedidos: {e}")
+                if st.session_state.pedidos:
+                    df_local = pd.DataFrame(st.session_state.pedidos)
+                    st.dataframe(df_local, use_container_width=True)
+                else:
+                    st.info("📋 Nenhum pedido cadastrado")
+        else:
+            if st.session_state.pedidos:
+                df_local = pd.DataFrame(st.session_state.pedidos)
+                st.dataframe(df_local, use_container_width=True)
+            else:
+                st.info("📋 Nenhum pedido cadastrado")
+
+# =========================================
+# 👥 PÁGINA: CLIENTES
+# =========================================
+
+elif menu == "👥 Clientes":
+    st.header("👥 Gestão de Clientes")
+    
+    tab1, tab2 = st.tabs(["➕ Cadastrar Cliente", "📋 Clientes Cadastrados"])
+    
+    with tab1:
+        st.subheader("➕ Cadastrar Novo Cliente")
+        
+        with st.form("novo_cliente"):
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                nome = st.text_input("Nome*")
+                telefone = st.text_input("Telefone")
+                escola = st.selectbox("Escola", st.session_state.escolas)
+            
+            with col2:
+                email = st.text_input("Email")
+                responsavel = st.text_input("Responsável")
+                observacoes = st.text_area("Observações")
+            
+            if st.form_submit_button("💾 Salvar Cliente"):
+                if nome:
+                    novo_cliente = {
+                        'id': len(st.session_state.clientes) + 1,
+                        'nome': nome,
+                        'telefone': telefone,
+                        'email': email,
+                        'escola': escola,
+                        'responsavel': responsavel,
+                        'observacoes': observacoes,
+                        'data_cadastro': datetime.now().strftime("%d/%m/%Y %H:%M")
+                    }
+                    
+                    if SUPABASE_DISPONIVEL:
+                        sucesso = salvar_cliente(novo_cliente)
+                        if sucesso:
+                            st.rerun()
+                    else:
+                        st.session_state.clientes.append(novo_cliente)
+                        salvar_dados()
+                        st.success("✅ Cliente cadastrado localmente!")
+                        st.rerun()
+                else:
+                    st.error("❌ Preencha o nome do cliente!")
+    
+    with tab2:
+        st.subheader("📋 Clientes Cadastrados")
+        
+        if SUPABASE_DISPONIVEL:
+            try:
+                clientes_df = buscar_clientes()
+                if not clientes_df.empty:
+                    st.dataframe(clientes_df, use_container_width=True)
+                else:
+                    st.info("📋 Nenhum cliente cadastrado no Supabase")
+            except Exception as e:
+                st.error(f"❌ Erro ao carregar clientes: {e}")
+                if st.session_state.clientes:
+                    df_local = pd.DataFrame(st.session_state.clientes)
+                    st.dataframe(df_local, use_container_width=True)
+                else:
+                    st.info("📋 Nenhum cliente cadastrado")
+        else:
+            if st.session_state.clientes:
+                df_local = pd.DataFrame(st.session_state.clientes)
+                st.dataframe(df_local, use_container_width=True)
+            else:
+                st.info("📋 Nenhum cliente cadastrado")
+
+# =========================================
+# 📦 PÁGINA: ESTOQUE
+# =========================================
+
+elif menu == "📦 Estoque":
+    st.header("📦 Controle de Estoque")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.subheader("📊 Estoque Atual")
+        if st.session_state.produtos:
+            df_estoque = pd.DataFrame(st.session_state.produtos)
+            st.dataframe(df_estoque, use_container_width=True)
+        else:
+            st.info("📋 Nenhum produto em estoque")
+    
+    with col2:
+        st.subheader("🔄 Movimentações")
+        
+        with st.form("movimentacao_estoque"):
+            tipo = st.radio("Tipo", ["Entrada", "Saída"])
+            produto = st.selectbox("Produto", [p['nome'] for p in st.session_state.produtos] if st.session_state.produtos else [])
+            quantidade = st.number_input("Quantidade", min_value=1, value=1)
+            motivo = st.text_input("Motivo")
+            
+            if st.form_submit_button("💾 Registrar Movimentação"):
+                st.success(f"✅ {tipo} de {quantidade} unidades registrada!")
+    
+    st.subheader("📈 Estatísticas de Estoque")
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        total_produtos = len(st.session_state.produtos)
+        st.metric("Total de Produtos", total_produtos)
+    
+    with col2:
+        total_estoque = sum(p.get('quantidade', 0) for p in st.session_state.produtos)
+        st.metric("Total em Estoque", total_estoque)
+    
+    with col3:
+        baixo_estoque = len([p for p in st.session_state.produtos if p.get('quantidade', 0) < 5])
+        st.metric("Produtos com Estoque Baixo", baixo_estoque)
+
+# =========================================
+# 📈 PÁGINA: RELATÓRIOS
+# =========================================
+
+elif menu == "📈 Relatórios":
+    st.header("📈 Relatórios Detalhados")
+    
+    tab1, tab2, tab3 = st.tabs(["📊 Vendas", "👕 Produtos", "👥 Clientes"])
+    
+    with tab1:
+        st.subheader("📊 Relatório de Vendas")
+        
+        if st.session_state.pedidos:
+            # Vendas por escola
+            escolas_vendas = {}
+            for pedido in st.session_state.pedidos:
+                escola = pedido.get('escola', 'N/A')
+                total_itens = pedido.get('total_itens', 0)
+                escolas_vendas[escola] = escolas_vendas.get(escola, 0) + total_itens
+            
+            if escolas_vendas:
+                df_vendas = pd.DataFrame(list(escolas_vendas.items()), columns=['Escola', 'Total de Itens'])
+                fig = px.bar(df_vendas, x='Escola', y='Total de Itens', title="Vendas por Escola")
+                st.plotly_chart(fig)
+        
+        st.subheader("📋 Resumo de Pedidos")
+        if st.session_state.pedidos:
+            df_pedidos = pd.DataFrame(st.session_state.pedidos)
+            st.dataframe(df_pedidos, use_container_width=True)
+    
+    with tab2:
+        st.subheader("👕 Relatório de Produtos")
+        
+        if st.session_state.produtos:
+            df_produtos = pd.DataFrame(st.session_state.produtos)
+            
+            # Produtos por categoria
+            categorias = df_produtos['categoria'].value_counts()
+            fig = px.pie(values=categorias.values, names=categorias.index, title="Produtos por Categoria")
+            st.plotly_chart(fig)
+            
+            st.dataframe(df_produtos, use_container_width=True)
+    
+    with tab3:
+        st.subheader("👥 Relatório de Clientes")
+        
+        if st.session_state.clientes:
+            df_clientes = pd.DataFrame(st.session_state.clientes)
+            
+            # Clientes por escola
+            escolas_clientes = df_clientes['escola'].value_counts()
+            fig = px.bar(x=escolas_clientes.index, y=escolas_clientes.values, title="Clientes por Escola")
+            st.plotly_chart(fig)
+            
+            st.dataframe(df_clientes, use_container_width=True)
+
+# =========================================
 # 💾 SISTEMA DE BACKUP E GERENCIAMENTO
 # =========================================
 
@@ -811,6 +978,6 @@ st.sidebar.write(f"👤 Usuário: **{st.session_state.username}**")
 # Notificação de alertas
 if 'alertas_mostrados' not in st.session_state:
     st.session_state.alertas_mostrados = True
-    produtos_baixo_estoque = [p for p in st.session_state.produtos if p.get('estoque', 0) < 5]
+    produtos_baixo_estoque = [p for p in st.session_state.produtos if p.get('quantidade', 0) < 5]
     if produtos_baixo_estoque:
         st.toast("⚠️ Alertas de estoque baixo detectados! Verifique a seção de Estoque.")
