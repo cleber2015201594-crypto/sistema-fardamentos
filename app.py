@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 from datetime import datetime, date, timedelta
 import json
 import os
@@ -9,15 +10,17 @@ import requests
 import time
 
 # =========================================
-# 🗄️ SISTEMA PRINCIPAL
+# 🗄️ SISTEMA AVANÇADO DE FARDAMENTOS
 # =========================================
 
 # Importar configurações
 try:
     from database.supabase_config import (
-        salvar_fardamento, buscar_fardamentos,
-        atualizar_fardamento, excluir_fardamento, salvar_pedido,
-        buscar_pedidos, salvar_cliente, buscar_clientes, sistema_hibrido
+        salvar_fardamento, buscar_fardamentos, atualizar_estoque,
+        excluir_fardamento, salvar_pedido, buscar_pedidos, atualizar_status_pedido,
+        salvar_cliente, buscar_clientes, sistema_hibrido, registrar_movimentacao,
+        buscar_movimentacoes, gerar_relatorio_estoque, gerar_estatisticas,
+        buscar_historico, criar_tabelas_iniciais
     )
 except Exception as e:
     st.sidebar.error("❌ Erro ao carregar sistema")
@@ -25,6 +28,7 @@ except Exception as e:
 # Status do sistema
 status, _ = sistema_hibrido()
 st.sidebar.success(status)
+
 # =========================================
 # 🗄️ SISTEMA DE PERSISTÊNCIA MELHORADO
 # =========================================
@@ -41,6 +45,8 @@ def salvar_dados():
             'clientes': st.session_state.clientes,
             'produtos': st.session_state.produtos,
             'usuarios': st.session_state.usuarios,
+            'movimentacoes': st.session_state.get('movimentacoes', []),
+            'historico': st.session_state.get('historico', []),
             'ultimo_backup': datetime.now().strftime("%d/%m/%Y %H:%M")
         }
         
@@ -66,6 +72,8 @@ def carregar_dados():
             st.session_state.clientes = dados.get('clientes', [])
             st.session_state.produtos = dados.get('produtos', [])
             st.session_state.usuarios = dados.get('usuarios', {})
+            st.session_state.movimentacoes = dados.get('movimentacoes', [])
+            st.session_state.historico = dados.get('historico', [])
             
             return True
     except Exception as e:
@@ -76,6 +84,8 @@ def carregar_dados():
     st.session_state.clientes = [] 
     st.session_state.produtos = []
     st.session_state.usuarios = {}
+    st.session_state.movimentacoes = []
+    st.session_state.historico = []
     return False
 
 # =========================================
@@ -165,7 +175,7 @@ def manter_app_ativo():
 # =========================================
 
 st.set_page_config(
-    page_title="Sistema de Fardamentos",
+    page_title="Sistema de Fardamentos - Premium",
     page_icon="👕",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -178,6 +188,7 @@ if 'logged_in' not in st.session_state:
 if 'dados_carregados' not in st.session_state:
     carregar_dados()
     inicializar_usuarios()
+    criar_tabelas_iniciais()
     st.session_state.dados_carregados = True
 
 if 'pedidos' not in st.session_state:
@@ -203,26 +214,8 @@ tamanhos_infantil = ["2", "4", "6", "8", "10", "12"]
 tamanhos_adulto = ["PP", "P", "M", "G", "GG"]
 todos_tamanhos = tamanhos_infantil + tamanhos_adulto
 
-# PRODUTOS REAIS
-tipos_camisetas = [
-    "Camiseta Básica", 
-    "Camiseta Regata", 
-    "Camiseta Manga Longa"
-]
-
-tipos_calcas = [
-    "Calça Jeans",
-    "Calça Tactel", 
-    "Calça Moletom",
-    "Bermuda",
-    "Short",
-    "Short Saia"
-]
-
-tipos_agasalhos = [
-    "Blusão",
-    "Moletom"
-]
+# CATEGORIAS ATUALIZADAS
+categorias_fardamento = ["Camiseta", "Camiseta Regata", "Calça", "Short", "Short Saia"]
 
 def verificar_e_corrigir_dados():
     """Verifica e corrige dados corrompidos"""
@@ -242,7 +235,7 @@ def verificar_e_corrigir_dados():
 verificar_e_corrigir_dados()
 
 # =========================================
-# 🎨 NAVEGAÇÃO
+# 🎨 NAVEGAÇÃO PREMIUM
 # =========================================
 
 if not st.session_state.logged_in:
@@ -277,170 +270,11 @@ elif menu == "⚙️ Configurações":
 st.markdown("---")
 
 # =========================================
-# ⚙️ PÁGINA: CONFIGURAÇÕES
+# 📊 DASHBOARD PREMIUM
 # =========================================
 
-if menu == "⚙️ Configurações":
-    tab1, tab2, tab3, tab4 = st.tabs(["👥 Gerenciar Usuários", "🔐 Alterar Senha", "🗄️ Banco de Dados", "🔄 Sistema"])
-    
-    with tab1:
-        st.header("👥 Gerenciar Usuários")
-        
-        st.subheader("➕ Cadastrar Novo Usuário")
-        with st.form("novo_usuario"):
-            novo_usuario = st.text_input("Nome de usuário")
-            nova_senha = st.text_input("Senha", type="password")
-            confirmar_senha = st.text_input("Confirmar senha", type="password")
-            
-            if st.form_submit_button("✅ Cadastrar Usuário"):
-                if not novo_usuario or not nova_senha:
-                    st.error("❌ Preencha todos os campos!")
-                elif nova_senha != confirmar_senha:
-                    st.error("❌ Senhas não coincidem!")
-                else:
-                    sucesso, mensagem = cadastrar_usuario(novo_usuario, nova_senha)
-                    if sucesso:
-                        st.success(mensagem)
-                    else:
-                        st.error(mensagem)
-        
-        st.subheader("📋 Usuários Cadastrados")
-        if st.session_state.usuarios:
-            df_usuarios = pd.DataFrame({
-                'Usuário': list(st.session_state.usuarios.keys()),
-                'Tipo': ['Administrador' if user == 'admin' else 'Vendedor' for user in st.session_state.usuarios.keys()]
-            })
-            st.dataframe(df_usuarios, use_container_width=True)
-            
-            st.info(f"👥 Total de usuários: {len(st.session_state.usuarios)}")
-        else:
-            st.info("👥 Nenhum usuário cadastrado")
-    
-    with tab2:
-        st.header("🔐 Alterar Senha")
-        
-        with st.form("alterar_senha"):
-            usuario = st.selectbox("Usuário", list(st.session_state.usuarios.keys()))
-            senha_atual = st.text_input("Senha atual", type="password")
-            nova_senha = st.text_input("Nova senha", type="password")
-            confirmar_nova_senha = st.text_input("Confirmar nova senha", type="password")
-            
-            if st.form_submit_button("🔄 Alterar Senha"):
-                if not senha_atual or not nova_senha:
-                    st.error("❌ Preencha todos os campos!")
-                elif nova_senha != confirmar_nova_senha:
-                    st.error("❌ Novas senhas não coincidem!")
-                else:
-                    sucesso, mensagem = alterar_senha(usuario, senha_atual, nova_senha)
-                    if sucesso:
-                        st.success(mensagem)
-                    else:
-                        st.error(mensagem)
-    
-    with tab3:
-        st.header("🗄️ Banco de Dados")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.subheader("📊 Status do Sistema")
-            if SUPABASE_DISPONIVEL:
-                status, conectado = sistema_hibrido()
-                if conectado:
-                    st.success("✅ Supabase Conectado")
-                    
-                    # Testar funcionalidades
-                    if st.button("🧪 Testar Funcionalidades"):
-                        try:
-                            fardamentos = buscar_fardamentos()
-                            st.success(f"✅ Funcionando! {len(fardamentos)} fardamentos no banco")
-                        except Exception as e:
-                            st.error(f"❌ Erro: {e}")
-                else:
-                    st.warning("⚠️ Supabase com problemas")
-            else:
-                st.info("📱 Modo Local Ativo")
-                st.write("Dados salvos temporariamente na sessão")
-        
-        with col2:
-            st.subheader("🔄 Migração de Dados")
-            
-            if st.button("🚀 Migrar para Supabase", use_container_width=True):
-                if SUPABASE_DISPONIVEL:
-                    with st.spinner("Migrando dados locais..."):
-                        # Migrar produtos
-                        produtos_migrados = 0
-                        for produto in st.session_state.produtos:
-                            if salvar_fardamento(
-                                nome=produto.get('nome', ''),
-                                tamanho=produto.get('tamanho', ''),
-                                quantidade=produto.get('quantidade', 0),
-                                categoria=produto.get('categoria', ''),
-                                responsavel=produto.get('responsavel', ''),
-                                observacoes=produto.get('observacoes', '')
-                            ):
-                                produtos_migrados += 1
-                        
-                        st.success(f"✅ {produtos_migrados} produtos migrados!")
-                else:
-                    st.error("❌ Supabase não disponível")
-            
-            st.subheader("💾 Backup")
-            if st.button("📥 Exportar Backup Local", use_container_width=True):
-                dados = {
-                    'pedidos': st.session_state.pedidos,
-                    'clientes': st.session_state.clientes,
-                    'produtos': st.session_state.produtos,
-                    'usuarios': st.session_state.usuarios,
-                    'data_backup': datetime.now().strftime("%d/%m/%Y %H:%M")
-                }
-                backup_json = json.dumps(dados, indent=2, ensure_ascii=False)
-                st.download_button(
-                    label="⬇️ Baixar Backup",
-                    data=backup_json,
-                    file_name=f"backup_fardamentos_{datetime.now().strftime('%d%m%Y_%H%M')}.json",
-                    mime="application/json"
-                )
-    
-    with tab4:
-        st.header("🔄 Sistema")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.subheader("📊 Status do Sistema")
-            st.info(f"🕒 Última atividade: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
-            st.info(f"👥 Usuários cadastrados: {len(st.session_state.usuarios)}")
-            st.info(f"📦 Pedidos no sistema: {len(st.session_state.pedidos)}")
-            st.info(f"👕 Produtos cadastrados: {len(st.session_state.produtos)}")
-            
-            if 'contador_ativacao' in st.session_state:
-                st.info(f"🔄 Atividades anti-hibernação: {st.session_state.contador_ativacao}")
-        
-        with col2:
-            st.subheader("🛠️ Manutenção")
-            
-            if st.button("🔄 Recarregar Todos os Dados", use_container_width=True):
-                carregar_dados()
-                st.success("✅ Dados recarregados!")
-                st.rerun()
-            
-            if st.button("🗑️ Limpar Dados Temporários", use_container_width=True):
-                st.session_state.itens_pedido = []
-                st.success("✅ Dados temporários limpos!")
-            
-            st.subheader("📋 Informações Técnicas")
-            st.write(f"👤 Usuário atual: **{st.session_state.username}**")
-            st.write(f"🗄️ Banco: {'Supabase' if SUPABASE_DISPONIVEL else 'Local'}")
-            st.write("💡 Dica: Para evitar hibernação, acesse o sistema regularmente")
-
-# =========================================
-# 📊 DASHBOARD
-# =========================================
-
-elif menu == "📊 Dashboard":
-    st.header("🎯 Métricas em Tempo Real")
-    
+if menu == "📊 Dashboard":
+    # Métricas em tempo real
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
@@ -461,7 +295,7 @@ elif menu == "📊 Dashboard":
     
     # Ações Rápidas
     st.header("⚡ Ações Rápidas")
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     
     with col1:
         if st.button("📝 Novo Pedido", use_container_width=True):
@@ -478,17 +312,23 @@ elif menu == "📊 Dashboard":
             st.session_state.menu = "👕 Fardamentos"
             st.rerun()
     
+    with col4:
+        if st.button("📊 Ver Relatórios", use_container_width=True):
+            st.session_state.menu = "📈 Relatórios"
+            st.rerun()
+    
     # Alertas de Estoque
     st.header("⚠️ Alertas de Estoque")
     produtos_alerta = [p for p in st.session_state.produtos if p.get('quantidade', 0) < 5]
     
     if produtos_alerta:
         for produto in produtos_alerta:
-            st.warning(f"🚨 {produto['nome']} - Tamanho: {produto.get('tamanho', 'N/A')} - Estoque: {produto.get('quantidade', 0)}")
+            cor = "🔴" if produto.get('quantidade', 0) == 0 else "🟡"
+            st.warning(f"{cor} **{produto['nome']}** - Tamanho: {produto.get('tamanho', 'N/A')} - Estoque: {produto.get('quantidade', 0)} - Categoria: {produto.get('categoria', 'N/A')}")
     else:
         st.success("✅ Nenhum alerta de estoque")
     
-    # Gráficos
+    # Gráficos Dashboard
     col1, col2 = st.columns(2)
     
     with col1:
@@ -497,12 +337,13 @@ elif menu == "📊 Dashboard":
             escolas_data = {}
             for pedido in st.session_state.pedidos:
                 escola = pedido.get('escola', 'N/A')
-                escolas_data[escola] = escolas_data.get(escola, 0) + 1
+                total_itens = pedido.get('total_itens', 1)
+                escolas_data[escola] = escolas_data.get(escola, 0) + total_itens
             
             if escolas_data:
                 df_escolas = pd.DataFrame(list(escolas_data.items()), columns=['Escola', 'Quantidade'])
-                fig = px.bar(df_escolas, x='Escola', y='Quantidade', title="Vendas por Escola")
-                st.plotly_chart(fig)
+                fig = px.bar(df_escolas, x='Escola', y='Quantidade', title="Vendas por Escola", color='Quantidade')
+                st.plotly_chart(fig, use_container_width=True)
             else:
                 st.info("📋 Nenhum dado para mostrar")
         else:
@@ -519,20 +360,35 @@ elif menu == "📊 Dashboard":
             if status_data:
                 df_status = pd.DataFrame(list(status_data.items()), columns=['Status', 'Quantidade'])
                 fig = px.pie(df_status, values='Quantidade', names='Status', title="Status dos Pedidos")
-                st.plotly_chart(fig)
+                st.plotly_chart(fig, use_container_width=True)
             else:
                 st.info("📋 Nenhum dado para mostrar")
         else:
             st.info("📋 Nenhum pedido para analisar")
+    
+    # Últimas Atividades
+    st.header("📋 Últimas Atividades")
+    historico = buscar_historico(10)
+    if not historico.empty:
+        for _, item in historico.iterrows():
+            with st.container():
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    st.write(f"**{item['tipo']}** - {item['detalhes']}")
+                with col2:
+                    st.caption(item['data'])
+                st.divider()
+    else:
+        st.info("📝 Nenhuma atividade recente")
 
 # =========================================
-# 👕 PÁGINA: FARDAMENTOS (CORRIGIDA)
+# 👕 PÁGINA: FARDAMENTOS PREMIUM
 # =========================================
 
 elif menu == "👕 Fardamentos":
     st.header("👕 Gestão de Fardamentos")
     
-    tab1, tab2 = st.tabs(["➕ Cadastrar Fardamento", "📋 Lista de Fardamentos"])
+    tab1, tab2, tab3 = st.tabs(["➕ Cadastrar Fardamento", "📋 Lista de Fardamentos", "🔍 Busca Avançada"])
     
     with tab1:
         st.subheader("➕ Cadastrar Novo Fardamento")
@@ -541,14 +397,14 @@ elif menu == "👕 Fardamentos":
             col1, col2 = st.columns(2)
             
             with col1:
-                nome = st.text_input("Nome do Fardamento*")
+                nome = st.text_input("Nome do Fardamento*", placeholder="Ex: Camiseta Básica Branca")
                 tamanho = st.selectbox("Tamanho*", todos_tamanhos)
-                quantidade = st.number_input("Quantidade*", min_value=0, value=0)
+                quantidade = st.number_input("Quantidade*", min_value=0, value=0, step=1)
             
             with col2:
-                categoria = st.selectbox("Categoria*", ["Camiseta", "Camiseta Regata", "Calça", "Short", "Short Saia"])
+                categoria = st.selectbox("Categoria*", categorias_fardamento)
                 escola = st.selectbox("Escola*", st.session_state.escolas)
-                observacoes = st.text_area("Observações")
+                observacoes = st.text_area("Observações", placeholder="Detalhes, cor, material...")
             
             submitted = st.form_submit_button("💾 Salvar Fardamento")
             if submitted:
@@ -568,35 +424,85 @@ elif menu == "👕 Fardamentos":
     with tab2:
         st.subheader("📋 Fardamentos Cadastrados")
         
-        if st.session_state.produtos:
-            df_local = pd.DataFrame(st.session_state.produtos)
-            st.dataframe(df_local, use_container_width=True)
+        # Filtros rápidos
+        col1, col2 = st.columns(2)
+        with col1:
+            filtro_escola = st.selectbox("Filtrar por Escola", ["Todas"] + st.session_state.escolas)
+        with col2:
+            filtro_categoria = st.selectbox("Filtrar por Categoria", ["Todas"] + categorias_fardamento)
+        
+        fardamentos_df = buscar_fardamentos(
+            filtro_escola if filtro_escola != "Todas" else None,
+            filtro_categoria if filtro_categoria != "Todas" else None
+        )
+        
+        if not fardamentos_df.empty:
+            # Formatar DataFrame para melhor visualização
+            df_display = fardamentos_df[['id', 'nome', 'categoria', 'tamanho', 'quantidade', 'escola', 'data_cadastro']]
+            st.dataframe(df_display, use_container_width=True, hide_index=True)
             
             # Estatísticas
             col1, col2, col3, col4 = st.columns(4)
             with col1:
-                st.metric("Total de Fardamentos", len(st.session_state.produtos))
+                st.metric("Total de Fardamentos", len(fardamentos_df))
             with col2:
-                total_estoque = sum(p.get('quantidade', 0) for p in st.session_state.produtos)
+                total_estoque = fardamentos_df['quantidade'].sum()
                 st.metric("Total em Estoque", total_estoque)
             with col3:
-                baixo_estoque = len([p for p in st.session_state.produtos if p.get('quantidade', 0) < 5])
+                baixo_estoque = len(fardamentos_df[fardamentos_df['quantidade'] < 5])
                 st.metric("Baixo Estoque", baixo_estoque)
             with col4:
-                # Fardamentos por escola
-                escolas_count = df_local['escola'].value_counts()
-                escola_mais = escolas_count.index[0] if not escolas_count.empty else "Nenhuma"
+                escola_mais = fardamentos_df['escola'].value_counts().index[0] if not fardamentos_df.empty else "Nenhuma"
                 st.metric("Escola com Mais", escola_mais)
         else:
             st.info("📋 Nenhum fardamento cadastrado")
+    
+    with tab3:
+        st.subheader("🔍 Busca e Edição Avançada")
+        
+        if st.session_state.produtos:
+            # Seletor de fardamento para edição
+            fardamentos_opcoes = [f"{p['id']} - {p['nome']} ({p['tamanho']}) - {p['escola']}" for p in st.session_state.produtos]
+            fardamento_selecionado = st.selectbox("Selecione um fardamento para editar:", fardamentos_opcoes)
+            
+            if fardamento_selecionado:
+                fardamento_id = int(fardamento_selecionado.split(" - ")[0])
+                fardamento = next((p for p in st.session_state.produtos if p['id'] == fardamento_id), None)
+                
+                if fardamento:
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        st.write("**Informações Atuais:**")
+                        st.write(f"**Nome:** {fardamento['nome']}")
+                        st.write(f"**Categoria:** {fardamento['categoria']}")
+                        st.write(f"**Tamanho:** {fardamento['tamanho']}")
+                        st.write(f"**Escola:** {fardamento['escola']}")
+                        st.write(f"**Estoque Atual:** {fardamento['quantidade']}")
+                    
+                    with col2:
+                        st.write("**Ações Rápidas:**")
+                        nova_quantidade = st.number_input("Nova Quantidade", value=fardamento['quantidade'], min_value=0)
+                        motivo = st.text_input("Motivo da Alteração")
+                        
+                        if st.button("🔄 Atualizar Estoque"):
+                            if atualizar_estoque(fardamento_id, nova_quantidade, motivo):
+                                st.rerun()
+                        
+                        if st.button("🗑️ Excluir Fardamento", type="secondary"):
+                            if excluir_fardamento(fardamento_id):
+                                st.rerun()
+        else:
+            st.info("📋 Nenhum fardamento cadastrado para editar")
+
 # =========================================
-# 📦 PÁGINA: PEDIDOS (CORRIGIDA)
+# 📦 PÁGINA: PEDIDOS PREMIUM
 # =========================================
 
 elif menu == "📦 Pedidos":
     st.header("📦 Gestão de Pedidos")
     
-    tab1, tab2 = st.tabs(["➕ Novo Pedido", "📋 Pedidos Cadastrados"])
+    tab1, tab2, tab3 = st.tabs(["➕ Novo Pedido", "📋 Pedidos Cadastrados", "🔄 Gerenciar Pedidos"])
     
     with tab1:
         st.subheader("➕ Novo Pedido")
@@ -611,29 +517,31 @@ elif menu == "📦 Pedidos":
         with col3:
             item_quantidade = st.number_input("Quantidade", min_value=1, value=1)
         
-        if st.button("➕ Adicionar Item", key="add_item"):
-            novo_item = {
-                'nome': item_nome,
-                'tamanho': item_tamanho,
-                'quantidade': item_quantidade
-            }
-            st.session_state.itens_pedido.append(novo_item)
-            st.success(f"✅ {item_quantidade}x {item_nome} ({item_tamanho}) adicionado!")
-            st.rerun()
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("➕ Adicionar Item", use_container_width=True, key="add_item"):
+                novo_item = {
+                    'nome': item_nome,
+                    'tamanho': item_tamanho,
+                    'quantidade': item_quantidade
+                }
+                st.session_state.itens_pedido.append(novo_item)
+                st.success(f"✅ {item_quantidade}x {item_nome} ({item_tamanho}) adicionado!")
+                st.rerun()
+        
+        with col2:
+            if st.button("🗑️ Limpar Todos os Itens", use_container_width=True, type="secondary"):
+                st.session_state.itens_pedido = []
+                st.rerun()
         
         # Mostrar itens adicionados
         if st.session_state.itens_pedido:
             st.subheader("📋 Itens no Pedido")
             df_itens = pd.DataFrame(st.session_state.itens_pedido)
-            st.dataframe(df_itens, use_container_width=True)
+            st.dataframe(df_itens, use_container_width=True, hide_index=True)
             
             total_itens = sum(item['quantidade'] for item in st.session_state.itens_pedido)
-            st.info(f"📦 Total de itens: {total_itens}")
-            
-            # Botão para limpar itens
-            if st.button("🗑️ Limpar Todos os Itens", type="secondary"):
-                st.session_state.itens_pedido = []
-                st.rerun()
+            st.info(f"📦 Total de itens no pedido: **{total_itens}**")
         
         # Formulário principal do pedido
         with st.form("novo_pedido"):
@@ -641,13 +549,13 @@ elif menu == "📦 Pedidos":
             
             col1, col2 = st.columns(2)
             with col1:
-                cliente = st.text_input("Cliente*")
+                cliente = st.text_input("Cliente*", placeholder="Nome do cliente ou escola")
                 escola = st.selectbox("Escola*", st.session_state.escolas)
             with col2:
                 data_entrega = st.date_input("Data de Entrega", min_value=date.today())
                 status = st.selectbox("Status", ["Pendente", "Em produção", "Pronto", "Entregue"])
             
-            observacoes = st.text_area("Observações do Pedido")
+            observacoes = st.text_area("Observações do Pedido", placeholder="Instruções especiais, endereço...")
             
             submitted = st.form_submit_button("💾 Salvar Pedido")
             if submitted:
@@ -672,24 +580,79 @@ elif menu == "📦 Pedidos":
     with tab2:
         st.subheader("📋 Pedidos Cadastrados")
         
-        if st.session_state.pedidos:
-            df_local = pd.DataFrame(st.session_state.pedidos)
-            st.dataframe(df_local, use_container_width=True)
+        # Filtros
+        col1, col2 = st.columns(2)
+        with col1:
+            filtro_status = st.selectbox("Filtrar por Status", ["Todos", "Pendente", "Em produção", "Pronto", "Entregue"])
+        with col2:
+            filtro_escola = st.selectbox("Filtrar por Escola", ["Todas"] + st.session_state.escolas)
+        
+        pedidos_df = buscar_pedidos(
+            filtro_status if filtro_status != "Todos" else None,
+            filtro_escola if filtro_escola != "Todas" else None
+        )
+        
+        if not pedidos_df.empty:
+            # DataFrame simplificado para visualização
+            colunas = ['id', 'cliente', 'escola', 'status', 'data_pedido', 'data_entrega', 'total_itens']
+            colunas_disponiveis = [col for col in colunas if col in pedidos_df.columns]
+            
+            st.dataframe(pedidos_df[colunas_disponiveis], use_container_width=True, hide_index=True)
             
             # Estatísticas de pedidos
             col1, col2, col3 = st.columns(3)
             with col1:
-                st.metric("Total de Pedidos", len(st.session_state.pedidos))
+                st.metric("Total de Pedidos", len(pedidos_df))
             with col2:
-                pedidos_pendentes = len([p for p in st.session_state.pedidos if p.get('status') == 'Pendente'])
+                pedidos_pendentes = len(pedidos_df[pedidos_df['status'] == 'Pendente'])
                 st.metric("Pedidos Pendentes", pedidos_pendentes)
             with col3:
-                total_itens_pedidos = sum(p.get('total_itens', 0) for p in st.session_state.pedidos)
+                total_itens_pedidos = pedidos_df['total_itens'].sum()
                 st.metric("Total de Itens", total_itens_pedidos)
         else:
             st.info("📋 Nenhum pedido cadastrado")
+    
+    with tab3:
+        st.subheader("🔄 Gerenciar Pedidos")
+        
+        if st.session_state.pedidos:
+            # Lista de pedidos para gerenciamento
+            for pedido in st.session_state.pedidos:
+                with st.expander(f"Pedido #{pedido['id']} - {pedido['cliente']} ({pedido['status']})"):
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        st.write(f"**Cliente:** {pedido['cliente']}")
+                        st.write(f"**Escola:** {pedido['escola']}")
+                        st.write(f"**Data do Pedido:** {pedido['data_pedido']}")
+                        st.write(f"**Data de Entrega:** {pedido['data_entrega']}")
+                    
+                    with col2:
+                        st.write(f"**Status:** {pedido['status']}")
+                        st.write(f"**Total de Itens:** {pedido['total_itens']}")
+                        
+                        # Alterar status
+                        novo_status = st.selectbox(
+                            "Alterar Status",
+                            ["Pendente", "Em produção", "Pronto", "Entregue"],
+                            index=["Pendente", "Em produção", "Pronto", "Entregue"].index(pedido['status']),
+                            key=f"status_{pedido['id']}"
+                        )
+                        
+                        if st.button("🔄 Atualizar Status", key=f"btn_{pedido['id']}"):
+                            if atualizar_status_pedido(pedido['id'], novo_status):
+                                st.rerun()
+                    
+                    # Itens do pedido
+                    st.write("**Itens do Pedido:**")
+                    if 'itens' in pedido and pedido['itens']:
+                        df_itens = pd.DataFrame(pedido['itens'])
+                        st.dataframe(df_itens, use_container_width=True, hide_index=True)
+        else:
+            st.info("📋 Nenhum pedido para gerenciar")
+
 # =========================================
-# 👥 PÁGINA: CLIENTES
+# 👥 PÁGINA: CLIENTES PREMIUM
 # =========================================
 
 elif menu == "👥 Clientes":
@@ -704,36 +667,28 @@ elif menu == "👥 Clientes":
             col1, col2 = st.columns(2)
             
             with col1:
-                nome = st.text_input("Nome*")
-                telefone = st.text_input("Telefone")
+                nome = st.text_input("Nome*", placeholder="Nome completo ou razão social")
+                telefone = st.text_input("Telefone", placeholder="(11) 99999-9999")
                 escola = st.selectbox("Escola", st.session_state.escolas)
             
             with col2:
-                email = st.text_input("Email")
-                responsavel = st.text_input("Responsável")
-                observacoes = st.text_area("Observações")
+                email = st.text_input("Email", placeholder="cliente@email.com")
+                responsavel = st.text_input("Responsável", placeholder="Nome do responsável")
+                observacoes = st.text_area("Observações", placeholder="Informações adicionais...")
             
-            if st.form_submit_button("💾 Salvar Cliente"):
+            submitted = st.form_submit_button("💾 Salvar Cliente")
+            if submitted:
                 if nome:
                     novo_cliente = {
-                        'id': len(st.session_state.clientes) + 1,
                         'nome': nome,
                         'telefone': telefone,
                         'email': email,
                         'escola': escola,
                         'responsavel': responsavel,
-                        'observacoes': observacoes,
-                        'data_cadastro': datetime.now().strftime("%d/%m/%Y %H:%M")
+                        'observacoes': observacoes
                     }
                     
-                    if SUPABASE_DISPONIVEL:
-                        sucesso = salvar_cliente(novo_cliente)
-                        if sucesso:
-                            st.rerun()
-                    else:
-                        st.session_state.clientes.append(novo_cliente)
-                        salvar_dados()
-                        st.success("✅ Cliente cadastrado localmente!")
+                    if salvar_cliente(novo_cliente):
                         st.rerun()
                 else:
                     st.error("❌ Preencha o nome do cliente!")
@@ -741,187 +696,98 @@ elif menu == "👥 Clientes":
     with tab2:
         st.subheader("📋 Clientes Cadastrados")
         
-        if SUPABASE_DISPONIVEL:
-            try:
-                clientes_df = buscar_clientes()
-                if not clientes_df.empty:
-                    st.dataframe(clientes_df, use_container_width=True)
-                else:
-                    st.info("📋 Nenhum cliente cadastrado no Supabase")
-            except Exception as e:
-                st.error(f"❌ Erro ao carregar clientes: {e}")
-                if st.session_state.clientes:
-                    df_local = pd.DataFrame(st.session_state.clientes)
-                    st.dataframe(df_local, use_container_width=True)
-                else:
-                    st.info("📋 Nenhum cliente cadastrado")
+        # Filtro por escola
+        filtro_escola = st.selectbox("Filtrar por Escola", ["Todas"] + st.session_state.escolas)
+        
+        clientes_df = buscar_clientes(filtro_escola if filtro_escola != "Todas" else None)
+        
+        if not clientes_df.empty:
+            st.dataframe(clientes_df, use_container_width=True, hide_index=True)
+            
+            # Estatísticas
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Total de Clientes", len(clientes_df))
+            with col2:
+                escola_mais = clientes_df['escola'].value_counts().index[0] if not clientes_df.empty else "Nenhuma"
+                st.metric("Escola com Mais", escola_mais)
+            with col3:
+                clientes_com_email = len(clientes_df[clientes_df['email'].notna() & (clientes_df['email'] != '')])
+                st.metric("Com Email", clientes_com_email)
         else:
-            if st.session_state.clientes:
-                df_local = pd.DataFrame(st.session_state.clientes)
-                st.dataframe(df_local, use_container_width=True)
-            else:
-                st.info("📋 Nenhum cliente cadastrado")
+            st.info("📋 Nenhum cliente cadastrado")
 
 # =========================================
-# 📦 PÁGINA: ESTOQUE
+# 📦 PÁGINA: ESTOQUE PREMIUM
 # =========================================
 
 elif menu == "📦 Estoque":
     st.header("📦 Controle de Estoque")
     
-    col1, col2 = st.columns(2)
+    tab1, tab2, tab3 = st.tabs(["📊 Estoque Atual", "🔄 Movimentações", "📈 Estatísticas"])
     
-    with col1:
+    with tab1:
         st.subheader("📊 Estoque Atual")
-        if st.session_state.produtos:
-            df_estoque = pd.DataFrame(st.session_state.produtos)
-            st.dataframe(df_estoque, use_container_width=True)
+        
+        relatorio_df = gerar_relatorio_estoque()
+        
+        if not relatorio_df.empty:
+            # Colorir o DataFrame baseado no status
+            def color_status(val):
+                if val == 'ESGOTADO':
+                    return 'color: red; font-weight: bold'
+                elif val == 'BAIXO':
+                    return 'color: orange; font-weight: bold'
+                elif val == 'MEDIO':
+                    return 'color: blue'
+                else:
+                    return 'color: green'
+            
+            styled_df = relatorio_df[['id', 'nome', 'categoria', 'tamanho', 'quantidade', 'escola', 'status_estoque']].style.applymap(
+                color_status, subset=['status_estoque']
+            )
+            
+            st.dataframe(styled_df, use_container_width=True)
+            
+            # Gráfico de estoque por categoria
+            st.subheader("📊 Distribuição por Categoria")
+            estoque_por_categoria = relatorio_df.groupby('categoria')['quantidade'].sum().reset_index()
+            fig = px.pie(estoque_por_categoria, values='quantidade', names='categoria', title="Estoque por Categoria")
+            st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("📋 Nenhum produto em estoque")
     
-    with col2:
-        st.subheader("🔄 Movimentações")
-        
-        with st.form("movimentacao_estoque"):
-            tipo = st.radio("Tipo", ["Entrada", "Saída"])
-            produto = st.selectbox("Produto", [p['nome'] for p in st.session_state.produtos] if st.session_state.produtos else [])
-            quantidade = st.number_input("Quantidade", min_value=1, value=1)
-            motivo = st.text_input("Motivo")
-            
-            if st.form_submit_button("💾 Registrar Movimentação"):
-                st.success(f"✅ {tipo} de {quantidade} unidades registrada!")
-    
-    st.subheader("📈 Estatísticas de Estoque")
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        total_produtos = len(st.session_state.produtos)
-        st.metric("Total de Produtos", total_produtos)
-    
-    with col2:
-        total_estoque = sum(p.get('quantidade', 0) for p in st.session_state.produtos)
-        st.metric("Total em Estoque", total_estoque)
-    
-    with col3:
-        baixo_estoque = len([p for p in st.session_state.produtos if p.get('quantidade', 0) < 5])
-        st.metric("Produtos com Estoque Baixo", baixo_estoque)
-
-# =========================================
-# 📈 PÁGINA: RELATÓRIOS
-# =========================================
-
-elif menu == "📈 Relatórios":
-    st.header("📈 Relatórios Detalhados")
-    
-    tab1, tab2, tab3 = st.tabs(["📊 Vendas", "👕 Produtos", "👥 Clientes"])
-    
-    with tab1:
-        st.subheader("📊 Relatório de Vendas")
-        
-        if st.session_state.pedidos:
-            # Vendas por escola
-            escolas_vendas = {}
-            for pedido in st.session_state.pedidos:
-                escola = pedido.get('escola', 'N/A')
-                total_itens = pedido.get('total_itens', 0)
-                escolas_vendas[escola] = escolas_vendas.get(escola, 0) + total_itens
-            
-            if escolas_vendas:
-                df_vendas = pd.DataFrame(list(escolas_vendas.items()), columns=['Escola', 'Total de Itens'])
-                fig = px.bar(df_vendas, x='Escola', y='Total de Itens', title="Vendas por Escola")
-                st.plotly_chart(fig)
-        
-        st.subheader("📋 Resumo de Pedidos")
-        if st.session_state.pedidos:
-            df_pedidos = pd.DataFrame(st.session_state.pedidos)
-            st.dataframe(df_pedidos, use_container_width=True)
-    
     with tab2:
-        st.subheader("👕 Relatório de Produtos")
+        st.subheader("🔄 Movimentações de Estoque")
         
-        if st.session_state.produtos:
-            df_produtos = pd.DataFrame(st.session_state.produtos)
-            
-            # Produtos por categoria
-            categorias = df_produtos['categoria'].value_counts()
-            fig = px.pie(values=categorias.values, names=categorias.index, title="Produtos por Categoria")
-            st.plotly_chart(fig)
-            
-            st.dataframe(df_produtos, use_container_width=True)
-    
-    with tab3:
-        st.subheader("👥 Relatório de Clientes")
+        col1, col2 = st.columns(2)
         
-        if st.session_state.clientes:
-            df_clientes = pd.DataFrame(st.session_state.clientes)
-            
-            # Clientes por escola
-            escolas_clientes = df_clientes['escola'].value_counts()
-            fig = px.bar(x=escolas_clientes.index, y=escolas_clientes.values, title="Clientes por Escola")
-            st.plotly_chart(fig)
-            
-            st.dataframe(df_clientes, use_container_width=True)
-
-# =========================================
-# 💾 SISTEMA DE BACKUP E GERENCIAMENTO
-# =========================================
-
-st.sidebar.markdown("---")
-st.sidebar.subheader("💾 Sistema de Dados")
-
-if st.sidebar.button("💾 Salvar Dados Agora"):
-    if salvar_dados():
-        st.sidebar.success("✅ Dados salvos!")
-    else:
-        st.sidebar.error("❌ Erro ao salvar")
-
-if st.sidebar.button("🔄 Recarregar Dados"):
-    if carregar_dados():
-        st.sidebar.success("✅ Dados recarregados!")
-        st.rerun()
-    else:
-        st.sidebar.error("❌ Erro ao recarregar")
-
-# Backup manual
-st.sidebar.markdown("---")
-st.sidebar.subheader("📤 Exportar Backup")
-
-if st.sidebar.button("📥 Gerar Backup"):
-    dados = {
-        'pedidos': st.session_state.pedidos,
-        'clientes': st.session_state.clientes,
-        'produtos': st.session_state.produtos,
-        'usuarios': st.session_state.usuarios,
-        'data_backup': datetime.now().strftime("%d/%m/%Y %H:%M"),
-        'total_registros': len(st.session_state.pedidos) + len(st.session_state.clientes) + len(st.session_state.produtos)
-    }
-    backup_json = json.dumps(dados, indent=2, ensure_ascii=False)
-    st.sidebar.download_button(
-        label="⬇️ Baixar Backup",
-        data=backup_json,
-        file_name=f"backup_fardamentos_{datetime.now().strftime('%d%m%Y_%H%M')}.json",
-        mime="application/json"
-    )
-
-# Estatísticas
-st.sidebar.markdown("---")
-st.sidebar.subheader("📊 Estatísticas")
-st.sidebar.write(f"📦 Pedidos: {len(st.session_state.pedidos)}")
-st.sidebar.write(f"👥 Clientes: {len(st.session_state.clientes)}")
-st.sidebar.write(f"👕 Produtos: {len(st.session_state.produtos)}")
-st.sidebar.write(f"👤 Usuários: {len(st.session_state.usuarios)}")
-
-# Logout
-st.sidebar.markdown("---")
-if st.sidebar.button("🚪 Sair"):
-    st.session_state.logged_in = False
-    st.rerun()
-
-st.sidebar.write(f"👤 Usuário: **{st.session_state.username}**")
-
-# Notificação de alertas
-if 'alertas_mostrados' not in st.session_state:
-    st.session_state.alertas_mostrados = True
-    produtos_baixo_estoque = [p for p in st.session_state.produtos if p.get('quantidade', 0) < 5]
-    if produtos_baixo_estoque:
-        st.toast("⚠️ Alertas de estoque baixo detectados! Verifique a seção de Estoque.")
+        with col1:
+            st.subheader("➕ Entrada de Estoque")
+            with st.form("entrada_estoque"):
+                fardamento_id = st.selectbox(
+                    "Fardamento",
+                    [f"{p['id']} - {p['nome']} ({p['tamanho']})" for p in st.session_state.produtos],
+                    key="entrada"
+                )
+                quantidade_entrada = st.number_input("Quantidade", min_value=1, value=1, key="qtd_entrada")
+                responsavel_entrada = st.text_input("Responsável", value=st.session_state.username)
+                observacao_entrada = st.text_input("Observação", placeholder="Compra, doação...")
+                
+                if st.form_submit_button("📥 Registrar Entrada"):
+                    if fardamento_id:
+                        id_selecionado = int(fardamento_id.split(" - ")[0])
+                        if registrar_movimentacao(id_selecionado, 'entrada', quantidade_entrada, responsavel_entrada, observacao_entrada):
+                            st.rerun()
+        
+        with col2:
+            st.subheader("➖ Saída de Estoque")
+            with st.form("saida_estoque"):
+                fardamento_id_saida = st.selectbox(
+                    "Fardamento",
+                    [f"{p['id']} - {p['nome']} ({p['tamanho']})" for p in st.session_state.produtos],
+                    key="saida"
+                )
+                quantidade_saida = st.number_input("Quantidade", min_value=1, value=1, key="qtd_saida")
+                responsavel_saida = st.text_input("Responsável", value=st.session_state.username, key="resp_saida")
+                observacao_saida = st.text_input("Observação", placeholder
