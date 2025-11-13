@@ -1,16 +1,25 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime, timedelta
-import json
-import os
+from datetime import datetime
 
 # =========================================
-# 🗄️ SISTEMA AVANÇADO DE FARDAMENTOS
+# 🗄️ SISTEMA LOCAL DE FARDAMENTOS
 # =========================================
 
 def sistema_hibrido():
     """Sistema local totalmente funcional"""
-    return "👕 Sistema de Fardamentos - Premium", True
+    return "👕 Sistema de Fardamentos", True
+
+def criar_tabelas_iniciais():
+    """Inicializa estruturas se necessário"""
+    try:
+        if 'movimentacoes' not in st.session_state:
+            st.session_state.movimentacoes = []
+        if 'historico' not in st.session_state:
+            st.session_state.historico = []
+        return True
+    except:
+        return False
 
 def salvar_fardamento(nome, tamanho, quantidade, categoria="", escola="", observacoes=""):
     """Salva um fardamento no sistema"""
@@ -85,6 +94,18 @@ def atualizar_estoque(id_fardamento, nova_quantidade, motivo=""):
         st.error(f"❌ Erro ao atualizar: {e}")
         return False
 
+def excluir_fardamento(id_fardamento):
+    """Exclui um fardamento"""
+    try:
+        if 'produtos' in st.session_state:
+            st.session_state.produtos = [p for p in st.session_state.produtos if p.get('id') != id_fardamento]
+            st.success("✅ Fardamento excluído!")
+            return True
+        return False
+    except Exception as e:
+        st.error(f"❌ Erro ao excluir: {e}")
+        return False
+
 def registrar_movimentacao(fardamento_id, tipo, quantidade, responsavel="", observacao=""):
     """Registra movimentação de entrada/saída"""
     try:
@@ -157,26 +178,12 @@ def buscar_historico(limite=50):
         return df.sort_values('data', ascending=False).head(limite)
     return pd.DataFrame()
 
-# Funções para pedidos melhoradas
 def salvar_pedido(dados_pedido):
     """Salva um pedido com validações"""
     try:
         if 'pedidos' not in st.session_state:
             st.session_state.pedidos = []
             
-        # Validar estoque antes de salvar
-        for item in dados_pedido.get('itens', []):
-            fardamento = next((p for p in st.session_state.produtos 
-                             if p['nome'] == item['nome'] and p['tamanho'] == item['tamanho']), None)
-            
-            if not fardamento:
-                st.warning(f"⚠️ {item['nome']} ({item['tamanho']}) não encontrado em estoque")
-                return False
-                
-            if fardamento['quantidade'] < item['quantidade']:
-                st.error(f"❌ Estoque insuficiente: {item['nome']} ({item['tamanho']}) - Disponível: {fardamento['quantidade']}")
-                return False
-        
         dados_pedido['id'] = len(st.session_state.pedidos) + 1
         dados_pedido['criado_em'] = datetime.now().strftime("%d/%m/%Y %H:%M")
         dados_pedido['numero_pedido'] = f"PED{datetime.now().strftime('%Y%m%d')}{len(st.session_state.pedidos) + 1:03d}"
@@ -186,7 +193,7 @@ def salvar_pedido(dados_pedido):
         # Registrar no histórico
         registrar_historico(
             tipo="PEDIDO",
-            detalhes=f"Novo pedido: {dados_pedido['cliente']} - {len(dados_pedido['itens'])} itens"
+            detalhes=f"Novo pedido: {dados_pedido['cliente']} - {len(dados_pedido.get('itens', []))} itens"
         )
         
         st.success(f"✅ Pedido {dados_pedido['numero_pedido']} salvo com sucesso!")
@@ -230,7 +237,6 @@ def atualizar_status_pedido(pedido_id, novo_status):
         st.error(f"❌ Erro ao atualizar status: {e}")
         return False
 
-# Funções para clientes
 def salvar_cliente(dados_cliente):
     """Salva um cliente"""
     try:
@@ -259,7 +265,6 @@ def buscar_clientes(filtro_escola=None):
         return df
     return pd.DataFrame()
 
-# Funções de relatórios avançados
 def gerar_relatorio_estoque():
     """Gera relatório completo de estoque"""
     if 'produtos' not in st.session_state or not st.session_state.produtos:
@@ -292,11 +297,3 @@ def gerar_estatisticas():
         'alertas_estoque': len([p for p in st.session_state.get('produtos', []) if p.get('quantidade', 0) < 5])
     }
     return stats
-
-def criar_tabelas_iniciais():
-    """Inicializa estruturas se necessário"""
-    if 'movimentacoes' not in st.session_state:
-        st.session_state.movimentacoes = []
-    if 'historico' not in st.session_state:
-        st.session_state.historico = []
-    return True
