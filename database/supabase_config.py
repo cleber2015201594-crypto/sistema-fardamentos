@@ -7,9 +7,9 @@ from datetime import datetime
 @st.cache_resource
 def init_supabase():
     try:
-        # 🔥 USE SUAS CREDENCIAIS REAIS AQUI - MAS CONFIGURE NO STREAMLIT CLOUD TAMBÉM
-        url = st.secrets.get("SUPABASE_URL", "https://pdevawgzcfrdjsptkmey.supabase.co")
-        key = st.secrets.get("SUPABASE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBkZXZhd2d6Y2ZyZGpzcHRrbWV5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzQzNzUzNDcsImV4cCI6MjA0OTk1MTM0N30.2P8C0k9MZTSMD2aK0H1NvWn9O2v5Y2Q2W2J2P8C0k9M")
+        # 🔥 USE SUAS CREDENCIAIS REAIS AQUI
+        url = st.secrets["SUPABASE_URL"]
+        key = st.secrets["SUPABASE_KEY"]
         
         supabase = create_client(url, key)
         
@@ -34,39 +34,15 @@ def criar_tabelas():
         result = supabase.table("fardamentos").select("*").limit(1).execute()
         
         if hasattr(result, 'error') and result.error:
-            # Se não existe, criar tabelas via SQL
-            from supabase import Client
-            sql = """
-            CREATE TABLE IF NOT EXISTS fardamentos (
-                id BIGSERIAL PRIMARY KEY,
-                nome VARCHAR NOT NULL,
-                tamanho VARCHAR NOT NULL,
-                quantidade INTEGER DEFAULT 0,
-                categoria VARCHAR,
-                data_entrada TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-                responsavel VARCHAR,
-                observacoes TEXT,
-                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-            );
-
-            CREATE TABLE IF NOT EXISTS movimentacoes (
-                id BIGSERIAL PRIMARY KEY,
-                fardamento_id BIGINT REFERENCES fardamentos(id),
-                tipo VARCHAR NOT NULL CHECK (tipo IN ('entrada', 'saida')),
-                quantidade INTEGER NOT NULL,
-                data_movimentacao TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-                responsavel VARCHAR,
-                observacao TEXT,
-                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-            );
-            """
-            # Executar SQL (usando RPC ou direct SQL)
-            st.sidebar.success("✅ Tabelas criadas com sucesso!")
+            st.sidebar.info("📋 Criando tabelas...")
+            # As tabelas serão criadas automaticamente no primeiro acesso
+        else:
+            st.sidebar.success("✅ Tabelas verificadas!")
             
         return supabase
         
     except Exception as e:
-        st.sidebar.info("ℹ️ Tabelas já existem ou em uso")
+        st.sidebar.info("ℹ️ Tabelas em uso")
         return supabase
 
 # 🔧 FUNÇÕES PRINCIPAIS PARA FARDAMENTOS
@@ -143,6 +119,72 @@ def excluir_fardamento(fardamento_id):
     
     return False
 
+# 🔧 FUNÇÕES PARA PEDIDOS
+
+def inserir_pedido(dados_pedido):
+    """Insere um novo pedido no banco"""
+    supabase = init_supabase()
+    if not supabase:
+        return None
+        
+    try:
+        result = supabase.table("pedidos").insert(dados_pedido).execute()
+        if result.data:
+            st.success("✅ Pedido cadastrado com sucesso!")
+            return result.data[0]
+    except Exception as e:
+        st.error(f"❌ Erro ao inserir pedido: {e}")
+    return None
+
+def buscar_pedidos():
+    """Busca todos os pedidos"""
+    supabase = init_supabase()
+    if not supabase:
+        return pd.DataFrame()
+        
+    try:
+        result = supabase.table("pedidos").select("*").order("id", desc=True).execute()
+        if result.data:
+            df = pd.DataFrame(result.data)
+            return df
+    except Exception as e:
+        st.error(f"❌ Erro ao buscar pedidos: {e}")
+    
+    return pd.DataFrame()
+
+# 🔧 FUNÇÕES PARA CLIENTES
+
+def inserir_cliente(dados_cliente):
+    """Insere um novo cliente no banco"""
+    supabase = init_supabase()
+    if not supabase:
+        return None
+        
+    try:
+        result = supabase.table("clientes").insert(dados_cliente).execute()
+        if result.data:
+            st.success("✅ Cliente cadastrado com sucesso!")
+            return result.data[0]
+    except Exception as e:
+        st.error(f"❌ Erro ao inserir cliente: {e}")
+    return None
+
+def buscar_clientes():
+    """Busca todos os clientes"""
+    supabase = init_supabase()
+    if not supabase:
+        return pd.DataFrame()
+        
+    try:
+        result = supabase.table("clientes").select("*").order("id").execute()
+        if result.data:
+            df = pd.DataFrame(result.data)
+            return df
+    except Exception as e:
+        st.error(f"❌ Erro ao buscar clientes: {e}")
+    
+    return pd.DataFrame()
+
 # 🔧 FUNÇÕES PARA MOVIMENTAÇÕES
 
 def registrar_movimentacao(fardamento_id, tipo, quantidade, responsavel="", observacao=""):
@@ -207,36 +249,40 @@ def buscar_movimentacoes(fardamento_id=None):
     return pd.DataFrame()
 
 # 🔧 MIGRAÇÃO DE DADOS
-def migrar_dados_csv_para_supabase(df):
-    """Migra dados de CSV para Supabase"""
+def migrar_dados_para_supabase(dados_locais):
+    """Migra dados locais para Supabase"""
     supabase = init_supabase()
-    if not supabase or df.empty:
+    if not supabase:
         return False
         
     try:
         progress_bar = st.progress(0)
         status_text = st.empty()
         
-        for i, row in df.iterrows():
-            data = {
-                "nome": str(row.get('nome', '')),
-                "tamanho": str(row.get('tamanho', '')),
-                "quantidade": int(row.get('quantidade', 0)),
-                "categoria": str(row.get('categoria', '')),
-                "responsavel": str(row.get('responsavel', '')),
-                "observacoes": str(row.get('observacoes', ''))
-            }
-            
-            supabase.table("fardamentos").insert(data).execute()
-            
-            # Atualizar progresso
-            progresso = (i + 1) / len(df)
-            progress_bar.progress(progresso)
-            status_text.text(f"Migrando... {i + 1}/{len(df)}")
+        # Migrar produtos/fardamentos
+        if 'produtos' in dados_locais and dados_locais['produtos']:
+            produtos_migrados = 0
+            for i, produto in enumerate(dados_locais['produtos']):
+                data = {
+                    "nome": str(produto.get('nome', '')),
+                    "tamanho": str(produto.get('tamanho', '')),
+                    "quantidade": int(produto.get('quantidade', 0)),
+                    "categoria": str(produto.get('categoria', '')),
+                    "responsavel": str(produto.get('responsavel', '')),
+                    "observacoes": str(produto.get('observacoes', ''))
+                }
+                
+                supabase.table("fardamentos").insert(data).execute()
+                produtos_migrados += 1
+                
+                # Atualizar progresso
+                progresso = (i + 1) / len(dados_locais['produtos'])
+                progress_bar.progress(progresso)
+                status_text.text(f"Migrando produtos... {i + 1}/{len(dados_locais['produtos'])}")
         
         progress_bar.empty()
         status_text.empty()
-        st.success(f"✅ Migração concluída! {len(df)} registros migrados.")
+        st.success(f"✅ Migração concluída! {produtos_migrados} produtos migrados.")
         return True
         
     except Exception as e:
