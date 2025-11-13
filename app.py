@@ -9,12 +9,40 @@ import requests
 import time
 
 # =========================================
-# 🗄️ SISTEMA DE PERSISTÊNCIA MELHORADO
+# 🗄️ INTEGRAÇÃO COM SUPABASE
+# =========================================
+
+# Importar configurações do Supabase
+try:
+    import sys
+    import os
+    sys.path.append(os.path.join(os.path.dirname(__file__), 'database'))
+    
+    from supabase_config import (
+        init_supabase, criar_tabelas, inserir_fardamento, 
+        buscar_fardamentos, atualizar_fardamento, excluir_fardamento,
+        inserir_pedido, buscar_pedidos, inserir_cliente, buscar_clientes,
+        registrar_movimentacao, buscar_movimentacoes, migrar_dados_para_supabase
+    )
+    
+    # Inicializar Supabase
+    supabase = init_supabase()
+    if supabase:
+        criar_tabelas()
+        SUPABASE_ATIVO = True
+    else:
+        SUPABASE_ATIVO = False
+except Exception as e:
+    st.sidebar.warning("⚠️ Supabase não configurado")
+    SUPABASE_ATIVO = False
+
+# =========================================
+# 🗄️ SISTEMA DE PERSISTÊNCIA HÍBRIDO (SUPABASE + LOCAL)
 # =========================================
 
 def get_data_path():
     """Define o caminho para salvar dados no Streamlit Cloud"""
-    return 'dados.json'
+    return 'data/dados_backup.json'
 
 def salvar_dados():
     """Salva dados com tratamento de erro"""
@@ -23,12 +51,19 @@ def salvar_dados():
             'pedidos': st.session_state.pedidos,
             'clientes': st.session_state.clientes,
             'produtos': st.session_state.produtos,
-            'usuarios': st.session_state.usuarios,  # 👈 AGORA SALVA USUÁRIOS TAMBÉM
+            'usuarios': st.session_state.usuarios,
             'ultimo_backup': datetime.now().strftime("%d/%m/%Y %H:%M")
         }
         
+        # Garantir que pasta data existe
+        os.makedirs("data", exist_ok=True)
+        
         with open(get_data_path(), 'w', encoding='utf-8') as f:
             json.dump(dados, f, indent=2, ensure_ascii=False)
+            
+        # Se Supabase está ativo, sincronizar
+        if SUPABASE_ATIVO:
+            st.sidebar.info("🔄 Sincronizando com Supabase...")
             
         return True
     except Exception as e:
@@ -45,13 +80,17 @@ def carregar_dados():
             st.session_state.pedidos = dados.get('pedidos', [])
             st.session_state.clientes = dados.get('clientes', [])
             st.session_state.produtos = dados.get('produtos', [])
-            st.session_state.usuarios = dados.get('usuarios', {})  # 👈 CARREGA USUÁRIOS
+            st.session_state.usuarios = dados.get('usuarios', {})
             
-            # Migração de dados antigos
-            for produto in st.session_state.produtos:
-                if 'escola' not in produto:
-                    produto['escola'] = "Municipal"
-                    
+            # Se Supabase está ativo, migrar dados
+            if SUPABASE_ATIVO and st.session_state.produtos:
+                st.sidebar.info("🚀 Migrando para Supabase...")
+                migrar_dados_para_supabase({
+                    'produtos': st.session_state.produtos
+                })
+                # Limpar dados locais após migração
+                st.session_state.produtos = []
+                
             return True
     except Exception as e:
         st.error(f"❌ Erro ao carregar dados: {e}")
@@ -60,7 +99,7 @@ def carregar_dados():
     st.session_state.pedidos = []
     st.session_state.clientes = [] 
     st.session_state.produtos = []
-    st.session_state.usuarios = {}  # 👈 INICIA USUÁRIOS VAZIO
+    st.session_state.usuarios = {}
     return False
 
 # =========================================
@@ -73,7 +112,6 @@ def make_hashes(password):
 def check_hashes(password, hashed_text):
     return make_hashes(password) == hashed_text
 
-# 👇 AGORA OS USUÁRIOS FICAM NO session_state E SÃO PERSISTIDOS
 def inicializar_usuarios():
     """Inicializa usuários padrão se não existirem"""
     if not st.session_state.usuarios:
@@ -81,7 +119,7 @@ def inicializar_usuarios():
             "admin": make_hashes("Admin@2024!"),
             "vendedor": make_hashes("Vendas@123")
         }
-        salvar_dados()  # 👈 SALVA OS USUÁRIOS NOVOS
+        salvar_dados()
 
 def cadastrar_usuario(novo_usuario, nova_senha):
     """Cadastra novo usuário no sistema"""
@@ -92,7 +130,7 @@ def cadastrar_usuario(novo_usuario, nova_senha):
         return False, "❌ Senha deve ter pelo menos 6 caracteres!"
     
     st.session_state.usuarios[novo_usuario] = make_hashes(nova_senha)
-    salvar_dados()  # 👈 SALVA NO BANCO DE DADOS
+    salvar_dados()
     return True, "✅ Usuário cadastrado com sucesso!"
 
 def alterar_senha(usuario, senha_atual, nova_senha):
@@ -107,7 +145,7 @@ def alterar_senha(usuario, senha_atual, nova_senha):
         return False, "❌ Nova senha deve ter pelo menos 6 caracteres!"
     
     st.session_state.usuarios[usuario] = make_hashes(nova_senha)
-    salvar_dados()  # 👈 SALVA ALTERAÇÃO
+    salvar_dados()
     return True, "✅ Senha alterada com sucesso!"
 
 def login():
@@ -132,7 +170,6 @@ def login():
 def manter_app_ativo():
     """Tenta manter o app ativo fazendo uma requisição periódica"""
     try:
-        # Isso vai gerar tráfego e evitar hibernação
         agora = datetime.now()
         if 'ultimo_ping' not in st.session_state:
             st.session_state.ultimo_ping = agora
@@ -140,13 +177,11 @@ def manter_app_ativo():
         # A cada 5 minutos, gera uma pequena atividade
         if (agora - st.session_state.ultimo_ping).seconds > 300:
             st.session_state.ultimo_ping = agora
-            # Apenas atualiza um timestamp para gerar atividade
             if 'contador_ativacao' not in st.session_state:
                 st.session_state.contador_ativacao = 0
             st.session_state.contador_ativacao += 1
             
-    except Exception as e:
-        # Falha silenciosamente - não queremos erro por causa do anti-hibernação
+    except Exception:
         pass
 
 # =========================================
@@ -166,7 +201,7 @@ if 'logged_in' not in st.session_state:
 
 if 'dados_carregados' not in st.session_state:
     carregar_dados()
-    inicializar_usuarios()  # 👈 INICIALIZA USUÁRIOS
+    inicializar_usuarios()
     st.session_state.dados_carregados = True
 
 if 'pedidos' not in st.session_state:
@@ -240,6 +275,12 @@ if not st.session_state.logged_in:
 
 st.sidebar.title("👕 Sistema de Fardamentos")
 
+# Status do Supabase
+if SUPABASE_ATIVO:
+    st.sidebar.success("🗄️ Supabase Ativo")
+else:
+    st.sidebar.warning("🗄️ Modo Local")
+
 menu_options = ["📊 Dashboard", "📦 Pedidos", "👥 Clientes", "👕 Fardamentos", "📦 Estoque", "📈 Relatórios", "⚙️ Configurações"]
 if 'menu' not in st.session_state:
     st.session_state.menu = menu_options[0]
@@ -266,11 +307,11 @@ elif menu == "⚙️ Configurações":
 st.markdown("---")
 
 # =========================================
-# ⚙️ NOVA PÁGINA: CONFIGURAÇÕES
+# ⚙️ PÁGINA: CONFIGURAÇÕES
 # =========================================
 
 if menu == "⚙️ Configurações":
-    tab1, tab2, tab3 = st.tabs(["👥 Gerenciar Usuários", "🔐 Alterar Senha", "🔄 Sistema"])
+    tab1, tab2, tab3, tab4 = st.tabs(["👥 Gerenciar Usuários", "🔐 Alterar Senha", "🗄️ Banco de Dados", "🔄 Sistema"])
     
     with tab1:
         st.header("👥 Gerenciar Usuários")
@@ -327,6 +368,44 @@ if menu == "⚙️ Configurações":
                         st.error(mensagem)
     
     with tab3:
+        st.header("🗄️ Banco de Dados")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.subheader("📊 Status do Supabase")
+            if SUPABASE_ATIVO:
+                st.success("✅ Conectado ao Supabase")
+                
+                # Testar conexão
+                if st.button("🧪 Testar Conexão"):
+                    try:
+                        fardamentos = buscar_fardamentos()
+                        st.success(f"✅ Conexão OK! {len(fardamentos)} fardamentos no banco")
+                    except Exception as e:
+                        st.error(f"❌ Erro na conexão: {e}")
+            else:
+                st.error("❌ Supabase não configurado")
+                st.info("💡 Configure as credenciais no Streamlit Cloud Secrets")
+        
+        with col2:
+            st.subheader("🔄 Migração de Dados")
+            if st.button("🚀 Migrar para Supabase"):
+                if SUPABASE_ATIVO:
+                    with st.spinner("Migrando dados..."):
+                        dados_para_migrar = {
+                            'produtos': st.session_state.produtos,
+                            'clientes': st.session_state.clientes,
+                            'pedidos': st.session_state.pedidos
+                        }
+                        if migrar_dados_para_supabase(dados_para_migrar):
+                            st.success("✅ Migração concluída!")
+                        else:
+                            st.error("❌ Erro na migração")
+                else:
+                    st.error("❌ Supabase não está configurado")
+    
+    with tab4:
         st.header("🔄 Sistema")
         
         col1, col2 = st.columns(2)
@@ -355,10 +434,11 @@ if menu == "⚙️ Configurações":
             
             st.subheader("📋 Informações Técnicas")
             st.write(f"👤 Usuário atual: **{st.session_state.username}**")
+            st.write(f"🗄️ Banco: {'Supabase' if SUPABASE_ATIVO else 'Local'}")
             st.write("💡 Dica: Para evitar hibernação, acesse o sistema regularmente")
 
 # =========================================
-# 📱 PÁGINAS DO SISTEMA (MANTIDAS)
+# 📱 OUTRAS PÁGINAS DO SISTEMA 
 # =========================================
 
 # DASHBOARD
@@ -412,7 +492,7 @@ elif menu == "📊 Dashboard":
     else:
         st.success("✅ Nenhum alerta de estoque")
     
-    # Gráficos (código mantido igual)
+    # Gráficos
     col1, col2 = st.columns(2)
     
     with col1:
@@ -453,7 +533,7 @@ elif menu == "📊 Dashboard":
         else:
             st.info("📋 Nenhum pedido para analisar")
 
-# ... (O RESTANTE DO SEU CÓDIGO ORIGINAL PERMANECE IGUAL - PEDIDOS, CLIENTES, FARDAMENTOS, ESTOQUE, RELATÓRIOS) ...
+# ... (AS DEMAIS PÁGINAS PERMANECEM COM SEU CÓDIGO ORIGINAL) ...
 
 # =========================================
 # 💾 SISTEMA DE BACKUP E GERENCIAMENTO
@@ -484,7 +564,7 @@ if st.sidebar.button("📥 Gerar Backup"):
         'pedidos': st.session_state.pedidos,
         'clientes': st.session_state.clientes,
         'produtos': st.session_state.produtos,
-        'usuarios': st.session_state.usuarios,  # 👈 AGORA INCLUI USUÁRIOS
+        'usuarios': st.session_state.usuarios,
         'data_backup': datetime.now().strftime("%d/%m/%Y %H:%M"),
         'total_registros': len(st.session_state.pedidos) + len(st.session_state.clientes) + len(st.session_state.produtos)
     }
