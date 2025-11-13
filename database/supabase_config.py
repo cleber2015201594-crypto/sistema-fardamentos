@@ -1,11 +1,21 @@
 import streamlit as st
-from supabase import create_client, Client
 import pandas as pd
 from datetime import datetime
+
+# Tenta importar Supabase
+try:
+    from supabase import create_client, Client
+    SUPABASE_AVAILABLE = True
+except ImportError:
+    SUPABASE_AVAILABLE = False
+    st.sidebar.warning("📦 Biblioteca Supabase não instalada")
 
 # Configurações do Supabase
 @st.cache_resource
 def init_supabase():
+    if not SUPABASE_AVAILABLE:
+        return None
+        
     try:
         # 🔥 USE SUAS CREDENCIAIS REAIS AQUI
         url = st.secrets["SUPABASE_URL"]
@@ -35,7 +45,6 @@ def criar_tabelas():
         
         if hasattr(result, 'error') and result.error:
             st.sidebar.info("📋 Criando tabelas...")
-            # As tabelas serão criadas automaticamente no primeiro acesso
         else:
             st.sidebar.success("✅ Tabelas verificadas!")
             
@@ -289,3 +298,19 @@ def migrar_dados_para_supabase(dados_locais):
         st.error(f"❌ Erro na migração: {e}")
     
     return False
+
+# Função para verificar se Supabase está funcionando
+def supabase_status():
+    """Verifica status do Supabase"""
+    if not SUPABASE_AVAILABLE:
+        return "❌ Biblioteca não instalada"
+    
+    supabase = init_supabase()
+    if supabase:
+        try:
+            result = supabase.table("fardamentos").select("*").limit(1).execute()
+            return "✅ Conectado e funcionando"
+        except Exception as e:
+            return f"❌ Erro: {e}"
+    else:
+        return "❌ Não conectado"
