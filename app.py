@@ -9,23 +9,22 @@ import requests
 import time
 
 # =========================================
-# 🗄️ SISTEMA LOCAL (SEM SUPABASE)
+# 🗄️ SISTEMA PRINCIPAL
 # =========================================
 
-# Importar configurações locais
+# Importar configurações
 try:
     from database.supabase_config import (
         salvar_fardamento, buscar_fardamentos,
         atualizar_fardamento, excluir_fardamento, salvar_pedido,
         buscar_pedidos, salvar_cliente, buscar_clientes, sistema_hibrido
     )
-    SUPABASE_DISPONIVEL = False  # 🔥 SEMPRE MODO LOCAL
 except Exception as e:
-    SUPABASE_DISPONIVEL = False
-    st.sidebar.warning("🗄️ Modo Local Ativo")
+    st.sidebar.error("❌ Erro ao carregar sistema")
 
-# Sempre modo local
-st.sidebar.success("📱 Modo Local Ativo")
+# Status do sistema
+status, _ = sistema_hibrido()
+st.sidebar.success(status)
 # =========================================
 # 🗄️ SISTEMA DE PERSISTÊNCIA MELHORADO
 # =========================================
