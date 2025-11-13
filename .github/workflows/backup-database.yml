@@ -1,15 +1,16 @@
-name: 💾 Backup Automático do Banco de Dados
+name: 💾 Backup Automático do Sistema
 
 on:
   schedule:
-    - cron: '0 */4 * * *'  # 🔄 BACKUP A CADA 4 HORAS
+    - cron: '0 */6 * * *'  # 🔄 BACKUP A CADA 6 HORAS
   push:
     paths:
-      - 'data/**'          # 📁 Backup quando arquivos na pasta data mudarem
+      - 'data/**'
+      - 'database/**'
   workflow_dispatch:        # 🚀 EXECUÇÃO MANUAL
 
 jobs:
-  backup-database:
+  backup-system:
     runs-on: ubuntu-latest
     steps:
       - name: 📥 Baixar código
@@ -17,15 +18,15 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           
-      - name: 🔍 Verificar mudanças nos dados
+      - name: 🔍 Verificar mudanças
         id: check-changes
         run: |
-          git add data/
+          git add data/ database/
           if git diff --staged --quiet; then
-            echo "📊 Nenhuma mudança nos dados detectada"
+            echo "📊 Nenhuma mudança detectada"
             echo "changes=false" >> $GITHUB_OUTPUT
           else
-            echo "🔄 Mudanças detectadas nos dados - fazendo backup"
+            echo "🔄 Mudanças detectadas - fazendo backup"
             echo "changes=true" >> $GITHUB_OUTPUT
           fi
 
@@ -39,19 +40,18 @@ jobs:
           git config --local user.name "GitHub Actions"
           
           # Fazer commit das mudanças
-          git add data/
+          git add data/ database/
           git commit -m "💾 Backup automático - $(date +'%d/%m/%Y %H:%M')"
           
           # Fazer push
           git push
           
           echo "✅ Backup concluído com sucesso!"
-          echo "📁 Arquivos backup: data/"
+          echo "📁 Pastas backup: data/, database/"
           echo "⏰ Horário: $(date)"
 
       - name: 📋 Status do backup
         run: |
           echo "🔔 Sistema de Backup Ativo"
-          echo "⏰ Próximo backup automático: em 4 horas"
+          echo "⏰ Próximo backup automático: em 6 horas"
           echo "📊 Backup manual: Clique em 'Run workflow'"
-          echo "📁 Pasta monitorada: data/"
