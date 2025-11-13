@@ -38,4 +38,4 @@ jobs:
         run: |
           echo "🔄 GitHub Actions executado com sucesso!"
           echo "📅 Próxima execução: em 3 horas"
-          echo "💾 Backup automático também está ativo"
+          echo "💾 Sistema anti-hibernação ativo"
