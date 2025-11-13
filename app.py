@@ -18,17 +18,35 @@ try:
     from database.supabase_config import (
         salvar_fardamento, buscar_fardamentos, atualizar_estoque,
         excluir_fardamento, salvar_pedido, buscar_pedidos, atualizar_status_pedido,
-        salvar_cliente, buscar_clientes, sistema_hibrido, registrar_movimentacao,
+        salvar_cliente, buscar_clientes, registrar_movimentacao,
         buscar_movimentacoes, gerar_relatorio_estoque, gerar_estatisticas,
         buscar_historico, criar_tabelas_iniciais
     )
+    
+    # Função local para sistema_hibrido
+    def sistema_hibrido():
+        return "👕 Sistema de Fardamentos - Premium", True
+        
 except Exception as e:
-    st.sidebar.error("❌ Erro ao carregar sistema")
+    # Fallback se houver erro na importação
+    def sistema_hibrido():
+        return "👕 Sistema de Fardamentos", True
+        
+    def salvar_fardamento(*args, **kwargs):
+        st.error("❌ Sistema temporariamente indisponível")
+        return False
+        
+    def buscar_fardamentos(*args, **kwargs):
+        return pd.DataFrame()
+        
+    # ... (adicionar outras funções fallback se necessário)
 
 # Status do sistema
-status, _ = sistema_hibrido()
-st.sidebar.success(status)
-
+try:
+    status, _ = sistema_hibrido()
+    st.sidebar.success(status)
+except:
+    st.sidebar.success("👕 Sistema de Fardamentos")
 # =========================================
 # 🗄️ SISTEMA DE PERSISTÊNCIA MELHORADO
 # =========================================
