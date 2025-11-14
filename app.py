@@ -588,35 +588,36 @@ elif menu == "📦 Pedidos":
             
             observacoes = st.text_area("Observações do Pedido", placeholder="Instruções especiais, endereço...")
             
-            submitted = st.form_submit_button("💾 Salvar Pedido")
-            if submitted:
-                if cliente and escola and st.session_state.itens_pedido:
-                    novo_pedido = {
-                        'cliente': cliente,
-                        'escola': escola,
-                        'data_pedido': datetime.now().strftime("%d/%m/%Y %H:%M"),
-                        'data_entrega': data_entrega.strftime("%d/%m/%Y"),
-                        'status': status,
-                        'itens': st.session_state.itens_pedido.copy(),
-                        'observacoes': observacoes,
-                        'total_itens': total_itens
-                    }
-                    
-                    try:
-                        from database.supabase_config import salvar_pedido
-                        if salvar_pedido(novo_pedido):
-                            st.session_state.itens_pedido = []
-                            st.rerun()
-                    except:
-                        # Fallback local
-                        novo_pedido['id'] = len(st.session_state.pedidos) + 1
-                        st.session_state.pedidos.append(novo_pedido)
-                        st.session_state.itens_pedido = []
-                        salvar_dados()
-                        st.success("✅ Pedido salvo com sucesso!")
-                        st.rerun()
-                else:
-                    st.error("❌ Preencha cliente, escola e adicione itens!")
+            # No formulário de pedidos, substitua a parte do submitted:
+submitted = st.form_submit_button("💾 Salvar Pedido")
+if submitted:
+    if cliente and escola and st.session_state.itens_pedido:
+        novo_pedido = {
+            'cliente': cliente,
+            'escola': escola,
+            'data_pedido': datetime.now().strftime("%d/%m/%Y %H:%M"),
+            'data_entrega': data_entrega.strftime("%d/%m/%Y"),
+            'status': status,
+            'itens': st.session_state.itens_pedido.copy(),
+            'observacoes': observacoes,
+            'total_itens': total_itens
+        }
+        
+        # 🔥 CORREÇÃO: Usar APENAS um método
+        try:
+            from database.supabase_config import salvar_pedido
+            resultado = salvar_pedido(novo_pedido)
+        except:
+            # Fallback local APENAS se o módulo falhar
+            novo_pedido['id'] = len(st.session_state.pedidos) + 1
+            st.session_state.pedidos.append(novo_pedido)
+            resultado = True
+        
+        if resultado:
+            st.session_state.itens_pedido = []
+            st.rerun()
+    else:
+        st.error("❌ Preencha cliente, escola e adicione itens!")
     
     with tab2:
         st.subheader("📋 Pedidos Cadastrados")
@@ -778,6 +779,53 @@ elif menu == "👥 Clientes":
                 st.metric("Com Email", clientes_com_email)
         else:
             st.info("📋 Nenhum cliente cadastrado")
+with tab2:
+    st.subheader("📋 Clientes Cadastrados")
+    
+    # Filtro por escola
+    filtro_escola = st.selectbox("Filtrar por Escola", ["Todas"] + st.session_state.escolas, key="filtro_escola_clientes")
+    
+    # Aplicar filtro
+    clientes_filtrados = st.session_state.clientes
+    if filtro_escola != "Todas":
+        clientes_filtrados = [c for c in clientes_filtrados if c.get('escola') == filtro_escola]
+    
+    if clientes_filtrados:
+        df_clientes = pd.DataFrame(clientes_filtrados)
+        st.dataframe(df_clientes, use_container_width=True, hide_index=True)
+        
+        # 🔥 NOVO: Seleção para exclusão
+        st.subheader("🗑️ Excluir Cliente")
+        clientes_para_excluir = [f"{c['id']} - {c['nome']} ({c['escola']})" for c in clientes_filtrados]
+        cliente_excluir = st.selectbox("Selecione o cliente para excluir:", clientes_para_excluir, key="select_excluir_cliente")
+        
+        if st.button("🗑️ Excluir Cliente Selecionado", type="secondary", key="btn_excluir_cliente"):
+            if cliente_excluir:
+                cliente_id = int(cliente_excluir.split(" - ")[0])
+                st.session_state.clientes = [c for c in st.session_state.clientes if c['id'] != cliente_id]
+                salvar_dados()
+                st.success("✅ Cliente excluído com sucesso!")
+                st.rerun()
+        
+        # Estatísticas
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Total de Clientes", len(clientes_filtrados), key="metric_clientes_total")
+        with col2:
+            if clientes_filtrados:
+                escolas_count = {}
+                for c in clientes_filtrados:
+                    escola = c.get('escola', 'N/A')
+                    escolas_count[escola] = escolas_count.get(escola, 0) + 1
+                escola_mais = max(escolas_count, key=escolas_count.get) if escolas_count else "Nenhuma"
+                st.metric("Escola com Mais", escola_mais, key="metric_escola_mais")
+            else:
+                st.metric("Escola com Mais", "Nenhuma", key="metric_escola_mais_vazia")
+        with col3:
+            clientes_com_email = len([c for c in clientes_filtrados if c.get('email')])
+            st.metric("Com Email", clientes_com_email, key="metric_clientes_email")
+    else:
+        st.info("📋 Nenhum cliente cadastrado")            
 # =========================================
 # 📦 PÁGINA: ESTOQUE PREMIUM
 # =========================================
