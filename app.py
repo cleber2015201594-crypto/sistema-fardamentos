@@ -492,7 +492,7 @@ def atualizar_estoque(produto_id, nova_quantidade):
     finally:
         conn.close()
 
-# FUNÇÕES PARA PEDIDOS - SISTEMA ATUALIZADO E CORRIGIDO
+# FUNÇÕES PARA PEDIDOS - SISTEMA COMPLETAMENTE CORRIGIDO
 def adicionar_pedido_venda(cliente_id, escola_id, itens, data_entrega, forma_pagamento, observacoes):
     """Adiciona pedido como venda (baixa estoque imediatamente)"""
     conn = get_connection()
@@ -503,7 +503,14 @@ def adicionar_pedido_venda(cliente_id, escola_id, itens, data_entrega, forma_pag
         cur = conn.cursor()
         data_pedido = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         quantidade_total = sum(item['quantidade'] for item in itens)
-        valor_total = sum(item['subtotal'] for item in itens)
+        
+        # CORREÇÃO: Calcular valor_total corretamente
+        valor_total = 0
+        for item in itens:
+            # Garantir que preco_unitario e subtotal sejam floats
+            preco_unitario = float(item['preco_unitario'])
+            subtotal = preco_unitario * item['quantidade']
+            valor_total += subtotal
         
         # Verificar estoque antes de processar
         for item in itens:
@@ -523,7 +530,7 @@ def adicionar_pedido_venda(cliente_id, escola_id, itens, data_entrega, forma_pag
         for item in itens:
             # CORREÇÃO: Garantir que os valores sejam float
             preco_unitario = float(item['preco_unitario'])
-            subtotal = float(item['subtotal'])
+            subtotal = preco_unitario * item['quantidade']
             
             cur.execute('''
                 INSERT INTO pedido_itens (pedido_id, produto_id, quantidade, preco_unitario, subtotal)
@@ -553,7 +560,13 @@ def adicionar_pedido_producao(cliente_id, escola_id, itens, data_entrega, observ
         cur = conn.cursor()
         data_pedido = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         quantidade_total = sum(item['quantidade'] for item in itens)
-        valor_total = sum(item['subtotal'] for item in itens)
+        
+        # CORREÇÃO: Calcular valor_total corretamente
+        valor_total = 0
+        for item in itens:
+            preco_unitario = float(item['preco_unitario'])
+            subtotal = preco_unitario * item['quantidade']
+            valor_total += subtotal
         
         cur.execute('''
             INSERT INTO pedidos (cliente_id, escola_id, data_entrega_prevista, 
@@ -566,7 +579,7 @@ def adicionar_pedido_producao(cliente_id, escola_id, itens, data_entrega, observ
         for item in itens:
             # CORREÇÃO: Garantir que os valores sejam float
             preco_unitario = float(item['preco_unitario'])
-            subtotal = float(item['subtotal'])
+            subtotal = preco_unitario * item['quantidade']
             
             cur.execute('''
                 INSERT INTO pedido_itens (pedido_id, produto_id, quantidade, preco_unitario, subtotal)
@@ -600,15 +613,57 @@ def finalizar_pedido_producao(pedido_id):
             produto_id, quantidade = item[0], item[1]
             cur.execute("UPDATE produtos SET estoque = estoque + ? WHERE id = ?", (quantidade, produto_id))
         
-        # Marcar pedido como finalizado
+        # Marcar pedido como finalizado (Pronto para Entrega)
         cur.execute('''
             UPDATE pedidos 
-            SET status = 'Concluído', data_entrega_real = ?
+            SET status = 'Pronto para entrega'
+            WHERE id = ?
+        ''', (pedido_id,))
+        
+        conn.commit()
+        return True, "✅ Produção finalizada! Itens adicionados ao estoque e prontos para entrega."
+        
+    except Exception as e:
+        conn.rollback()
+        return False, f"Erro: {str(e)}"
+    finally:
+        conn.close()
+
+def entregar_pedido_producao(pedido_id):
+    """Entrega pedido de produção (baixa estoque)"""
+    conn = get_connection()
+    if not conn:
+        return False, "Erro de conexão"
+    
+    try:
+        cur = conn.cursor()
+        
+        # Buscar itens do pedido
+        cur.execute('SELECT produto_id, quantidade FROM pedido_itens WHERE pedido_id = ?', (pedido_id,))
+        itens = cur.fetchall()
+        
+        # Verificar estoque antes de entregar
+        for item in itens:
+            produto_id, quantidade = item[0], item[1]
+            cur.execute("SELECT estoque, nome FROM produtos WHERE id = ?", (produto_id,))
+            resultado = cur.fetchone()
+            if resultado and resultado[0] < quantidade:
+                return False, f"❌ Estoque insuficiente para entrega. Produto: {resultado[1]}, Disponível: {resultado[0]}, Necessário: {quantidade}"
+        
+        # Baixar estoque para entrega
+        for item in itens:
+            produto_id, quantidade = item[0], item[1]
+            cur.execute("UPDATE produtos SET estoque = estoque - ? WHERE id = ?", (quantidade, produto_id))
+        
+        # Marcar pedido como entregue
+        cur.execute('''
+            UPDATE pedidos 
+            SET status = 'Entregue', data_entrega_real = ?
             WHERE id = ?
         ''', (datetime.now().strftime("%Y-%m-%d"), pedido_id))
         
         conn.commit()
-        return True, "✅ Pedido finalizado e estoque atualizado!"
+        return True, "✅ Pedido entregue com sucesso! Estoque atualizado."
         
     except Exception as e:
         conn.rollback()
@@ -693,10 +748,10 @@ def excluir_pedido(pedido_id):
         cur = conn.cursor()
         
         # Verificar tipo do pedido para restaurar estoque se necessário
-        cur.execute('SELECT tipo FROM pedidos WHERE id = ?', (pedido_id,))
+        cur.execute('SELECT tipo, status FROM pedidos WHERE id = ?', (pedido_id,))
         resultado = cur.fetchone()
         if resultado:
-            tipo_pedido = resultado[0]
+            tipo_pedido, status = resultado[0], resultado[1]
             
             if tipo_pedido == 'venda':
                 # Restaurar estoque para pedidos de venda
@@ -706,6 +761,15 @@ def excluir_pedido(pedido_id):
                 for item in itens:
                     produto_id, quantidade = item[0], item[1]
                     cur.execute("UPDATE produtos SET estoque = estoque + ? WHERE id = ?", (quantidade, produto_id))
+            
+            elif tipo_pedido == 'producao' and status == 'Pronto para entrega':
+                # Se era produção pronta para entrega, remover do estoque
+                cur.execute('SELECT produto_id, quantidade FROM pedido_itens WHERE pedido_id = ?', (pedido_id,))
+                itens = cur.fetchall()
+                
+                for item in itens:
+                    produto_id, quantidade = item[0], item[1]
+                    cur.execute("UPDATE produtos SET estoque = estoque - ? WHERE id = ?", (quantidade, produto_id))
         
         # Excluir pedido
         cur.execute("DELETE FROM pedidos WHERE id = ?", (pedido_id,))
@@ -1535,7 +1599,7 @@ elif menu == "🏭 Produção":
         st.error("❌ Nenhuma escola cadastrada. Configure as escolas primeiro.")
         st.stop()
     
-    tab1, tab2, tab3 = st.tabs(["📋 Pedidos em Produção", "🔄 Finalizar Produção", "➕ Novo Pedido Produção"])
+    tab1, tab2, tab3, tab4 = st.tabs(["📋 Pedidos em Produção", "📦 Prontos para Entrega", "🔄 Gerenciar Produção", "➕ Novo Pedido Produção"])
     
     with tab1:
         st.header("📋 Pedidos em Produção")
@@ -1606,33 +1670,141 @@ elif menu == "🏭 Produção":
             st.info("🎉 Nenhum pedido em produção no momento!")
     
     with tab2:
-        st.header("🔄 Finalizar Produção em Lote")
+        st.header("📦 Prontos para Entrega")
         
-        # Lista de pedidos em produção para seleção múltipla
-        todos_pedidos_producao = []
+        # Buscar pedidos prontos para entrega
+        pedidos_prontos = []
         for escola in escolas:
             pedidos = listar_pedidos_por_escola(escola[0], tipo='producao')
-            todos_pedidos_producao.extend([p for p in pedidos if p[3] == 'Em produção'])
+            pedidos_prontos.extend([p for p in pedidos if p[3] == 'Pronto para entrega'])
         
-        if todos_pedidos_producao:
-            pedidos_selecionados = st.multiselect(
-                "Selecione os pedidos para finalizar:",
-                [f"#{p[0]} - {p[11]} - {p[12]} - R$ {float(p[9]):.2f}" for p in todos_pedidos_producao]
-            )
-            
-            if st.button("🏁 Finalizar Pedidos Selecionados", type="primary"):
-                for pedido_str in pedidos_selecionados:
-                    pedido_id = int(pedido_str.split("#")[1].split(" -")[0])
-                    sucesso, msg = finalizar_pedido_producao(pedido_id)
-                    if sucesso:
-                        st.success(f"Pedido #{pedido_id}: {msg}")
-                    else:
-                        st.error(f"Pedido #{pedido_id}: {msg}")
-                st.rerun()
+        if pedidos_prontos:
+            for pedido in pedidos_prontos:
+                with st.expander(f"Pedido #{pedido[0]} - {pedido[11]} - {pedido[12]} - 💰 R$ {float(pedido[9]):.2f}"):
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        st.write(f"**Cliente:** {pedido[11]}")
+                        st.write(f"**Escola:** {pedido[12]}")
+                        st.write(f"**Data do Pedido:** {pedido[4]}")
+                        st.write(f"**Entrega Prevista:** {pedido[5]}")
+                    
+                    with col2:
+                        st.write(f"**Quantidade Total:** {pedido[8]}")
+                        st.write(f"**Valor Total:** R$ {float(pedido[9]):.2f}")
+                        if pedido[10]:
+                            st.write(f"**Observações:** {pedido[10]}")
+                    
+                    # Itens do pedido
+                    st.subheader("📦 Itens Prontos")
+                    conn = get_connection()
+                    if conn:
+                        try:
+                            cur = conn.cursor()
+                            cur.execute('''
+                                SELECT pi.quantidade, p.nome, p.tamanho, p.cor, p.preco
+                                FROM pedido_itens pi
+                                JOIN produtos p ON pi.produto_id = p.id
+                                WHERE pi.pedido_id = ?
+                            ''', (pedido[0],))
+                            
+                            itens = cur.fetchall()
+                            for item in itens:
+                                st.write(f"- {item[1]} ({item[2]} - {item[3]}) - {item[0]} unidades - R$ {item[4]:.2f}")
+                        finally:
+                            conn.close()
+                    
+                    # Botão para entregar
+                    if st.button("🚚 Entregar Pedido", key=f"entregar_{pedido[0]}"):
+                        sucesso, msg = entregar_pedido_producao(pedido[0])
+                        if sucesso:
+                            st.success(msg)
+                            st.rerun()
+                        else:
+                            st.error(msg)
         else:
-            st.info("🎉 Todos os pedidos estão finalizados!")
+            st.info("📦 Nenhum pedido pronto para entrega")
     
     with tab3:
+        st.header("🔄 Gerenciar Produção")
+        
+        producao = listar_pedidos_por_escola(tipo='producao')
+        
+        if producao:
+            # Filtros
+            col1, col2 = st.columns(2)
+            with col1:
+                status_filtro = st.selectbox(
+                    "Filtrar por status:",
+                    ["Todos"] + list(set(p[3] for p in producao)),
+                    key="filtro_producao"
+                )
+            with col2:
+                escola_filtro = st.selectbox(
+                    "Filtrar por escola:",
+                    ["Todas"] + list(set(p[12] for p in producao)),
+                    key="filtro_escola_producao"
+                )
+            
+            # Aplicar filtros
+            producao_filtrada = producao
+            if status_filtro != "Todos":
+                producao_filtrada = [p for p in producao_filtrada if p[3] == status_filtro]
+            if escola_filtro != "Todas":
+                producao_filtrada = [p for p in producao_filtrada if p[12] == escola_filtro]
+            
+            for pedido in producao_filtrada:
+                with st.expander(f"Pedido #{pedido[0]} - {pedido[11]} - {pedido[12]} - {pedido[3]} - R$ {float(pedido[9]):.2f}"):
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        st.write(f"**Cliente:** {pedido[11]}")
+                        st.write(f"**Escola:** {pedido[12]}")
+                        st.write(f"**Data do Pedido:** {pedido[4]}")
+                        st.write(f"**Entrega Prevista:** {pedido[5]}")
+                        if pedido[6]:
+                            st.write(f"**Entrega Real:** {pedido[6]}")
+                    
+                    with col2:
+                        st.write(f"**Status:** {pedido[3]}")
+                        st.write(f"**Quantidade Total:** {pedido[8]}")
+                        st.write(f"**Valor Total:** R$ {float(pedido[9]):.2f}")
+                        if pedido[10]:
+                            st.write(f"**Observações:** {pedido[10]}")
+                    
+                    # Ações por status
+                    if pedido[3] == 'Em produção':
+                        if st.button("✅ Finalizar Produção", key=f"finalizar_ger_{pedido[0]}"):
+                            sucesso, msg = finalizar_pedido_producao(pedido[0])
+                            if sucesso:
+                                st.success(msg)
+                                st.rerun()
+                            else:
+                                st.error(msg)
+                    
+                    elif pedido[3] == 'Pronto para entrega':
+                        if st.button("🚚 Entregar", key=f"entregar_ger_{pedido[0]}"):
+                            sucesso, msg = entregar_pedido_producao(pedido[0])
+                            if sucesso:
+                                st.success(msg)
+                                st.rerun()
+                            else:
+                                st.error(msg)
+                    
+                    # Excluir pedido
+                    if st.button("🗑️ Excluir Pedido", key=f"del_prod_{pedido[0]}"):
+                        st.warning("⚠️ Esta ação não pode ser desfeita!")
+                        if st.button("✅ Confirmar Exclusão", key=f"conf_del_prod_{pedido[0]}"):
+                            sucesso, msg = excluir_pedido(pedido[0])
+                            if sucesso:
+                                st.success(msg)
+                                st.rerun()
+                            else:
+                                st.error(msg)
+        else:
+            st.info("🏭 Nenhum pedido de produção")
+    
+    with tab4:
         st.header("➕ Novo Pedido de Produção")
         
         # Seleção da escola para o pedido
@@ -1880,7 +2052,7 @@ elif menu == "📈 Relatórios":
 
 # Rodapé
 st.sidebar.markdown("---")
-st.sidebar.info("👕 Sistema de Fardamentos v11.0\n\n🏭 **Produção + Vendas Corrigidos**\n💰 **Preços Corretos**\n📦 **Estoque Sincronizado**")
+st.sidebar.info("👕 Sistema de Fardamentos v13.0\n\n✅ **FLUXO CORRETO DE PRODUÇÃO**\n🏭 Pedido → Produção → Estoque → Entrega\n🛒 Vendas diretas do estoque")
 
 # Botão para recarregar dados
 if st.sidebar.button("🔄 Recarregar Dados"):
