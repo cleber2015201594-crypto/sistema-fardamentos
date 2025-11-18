@@ -82,14 +82,14 @@ def init_db():
                 )
             ''')
             
-            # Tabela de pedidos (AGORA COM TIPO)
+            # Tabela de pedidos (ATUALIZADA COM COLUNA TIPO)
             cur.execute('''
                 CREATE TABLE IF NOT EXISTS pedidos (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     cliente_id INTEGER REFERENCES clientes(id),
                     escola_id INTEGER REFERENCES escolas(id),
                     status TEXT DEFAULT 'Pendente',
-                    tipo TEXT DEFAULT 'venda',  -- 'venda' ou 'producao'
+                    tipo TEXT DEFAULT 'venda',
                     data_pedido TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     data_entrega_prevista DATE,
                     data_entrega_real DATE,
@@ -683,16 +683,18 @@ def excluir_pedido(pedido_id):
         
         # Verificar tipo do pedido para restaurar estoque se necessário
         cur.execute('SELECT tipo FROM pedidos WHERE id = ?', (pedido_id,))
-        tipo_pedido = cur.fetchone()[0]
-        
-        if tipo_pedido == 'venda':
-            # Restaurar estoque para pedidos de venda
-            cur.execute('SELECT produto_id, quantidade FROM pedido_itens WHERE pedido_id = ?', (pedido_id,))
-            itens = cur.fetchall()
+        resultado = cur.fetchone()
+        if resultado:
+            tipo_pedido = resultado[0]
             
-            for item in itens:
-                produto_id, quantidade = item[0], item[1]
-                cur.execute("UPDATE produtos SET estoque = estoque + ? WHERE id = ?", (quantidade, produto_id))
+            if tipo_pedido == 'venda':
+                # Restaurar estoque para pedidos de venda
+                cur.execute('SELECT produto_id, quantidade FROM pedido_itens WHERE pedido_id = ?', (pedido_id,))
+                itens = cur.fetchall()
+                
+                for item in itens:
+                    produto_id, quantidade = item[0], item[1]
+                    cur.execute("UPDATE produtos SET estoque = estoque + ? WHERE id = ?", (quantidade, produto_id))
         
         # Excluir pedido
         cur.execute("DELETE FROM pedidos WHERE id = ?", (pedido_id,))
