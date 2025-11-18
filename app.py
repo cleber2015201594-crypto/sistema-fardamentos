@@ -430,10 +430,13 @@ def adicionar_produto(nome, categoria, tamanho, cor, preco, estoque, descricao, 
     try:
         cur = conn.cursor()
         
+        # CORREÇÃO: Garantir que o preço seja float
+        preco_float = float(preco)
+        
         cur.execute('''
             INSERT INTO produtos (nome, categoria, tamanho, cor, preco, estoque, descricao, escola_id)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (nome, categoria, tamanho, cor, preco, estoque, descricao, escola_id))
+        ''', (nome, categoria, tamanho, cor, preco_float, estoque, descricao, escola_id))
         
         conn.commit()
         return True, "✅ Produto cadastrado com sucesso!"
@@ -489,7 +492,7 @@ def atualizar_estoque(produto_id, nova_quantidade):
     finally:
         conn.close()
 
-# FUNÇÕES PARA PEDIDOS - SISTEMA ATUALIZADO
+# FUNÇÕES PARA PEDIDOS - SISTEMA ATUALIZADO E CORRIGIDO
 def adicionar_pedido_venda(cliente_id, escola_id, itens, data_entrega, forma_pagamento, observacoes):
     """Adiciona pedido como venda (baixa estoque imediatamente)"""
     conn = get_connection()
@@ -518,10 +521,14 @@ def adicionar_pedido_venda(cliente_id, escola_id, itens, data_entrega, forma_pag
         pedido_id = cur.lastrowid
         
         for item in itens:
+            # CORREÇÃO: Garantir que os valores sejam float
+            preco_unitario = float(item['preco_unitario'])
+            subtotal = float(item['subtotal'])
+            
             cur.execute('''
                 INSERT INTO pedido_itens (pedido_id, produto_id, quantidade, preco_unitario, subtotal)
                 VALUES (?, ?, ?, ?, ?)
-            ''', (pedido_id, item['produto_id'], item['quantidade'], item['preco_unitario'], item['subtotal']))
+            ''', (pedido_id, item['produto_id'], item['quantidade'], preco_unitario, subtotal))
             
             # Baixar estoque (apenas para vendas)
             cur.execute("UPDATE produtos SET estoque = estoque - ? WHERE id = ?", 
@@ -557,10 +564,14 @@ def adicionar_pedido_producao(cliente_id, escola_id, itens, data_entrega, observ
         pedido_id = cur.lastrowid
         
         for item in itens:
+            # CORREÇÃO: Garantir que os valores sejam float
+            preco_unitario = float(item['preco_unitario'])
+            subtotal = float(item['subtotal'])
+            
             cur.execute('''
                 INSERT INTO pedido_itens (pedido_id, produto_id, quantidade, preco_unitario, subtotal)
                 VALUES (?, ?, ?, ?, ?)
-            ''', (pedido_id, item['produto_id'], item['quantidade'], item['preco_unitario'], item['subtotal']))
+            ''', (pedido_id, item['produto_id'], item['quantidade'], preco_unitario, subtotal))
         
         conn.commit()
         return True, pedido_id
@@ -572,7 +583,7 @@ def adicionar_pedido_producao(cliente_id, escola_id, itens, data_entrega, observ
         conn.close()
 
 def finalizar_pedido_producao(pedido_id):
-    """Finaliza pedido de produção e adiciona ao estoque"""
+    """Finaliza pedido de produção e adiciona ao estoque - CORRIGIDA"""
     conn = get_connection()
     if not conn:
         return False, "Erro de conexão"
@@ -584,7 +595,7 @@ def finalizar_pedido_producao(pedido_id):
         cur.execute('SELECT produto_id, quantidade FROM pedido_itens WHERE pedido_id = ?', (pedido_id,))
         itens = cur.fetchall()
         
-        # Atualizar estoque
+        # Atualizar estoque - CORREÇÃO: Adicionar ao estoque existente
         for item in itens:
             produto_id, quantidade = item[0], item[1]
             cur.execute("UPDATE produtos SET estoque = estoque + ? WHERE id = ?", (quantidade, produto_id))
@@ -1084,7 +1095,8 @@ elif menu == "👕 Produtos":
                 cor = st.text_input("🎨 Cor*", value="Branco", placeholder="Ex: Azul Marinho")
             
             with col2:
-                preco = st.number_input("💰 Preço (R$)*", min_value=0.0, value=29.90, step=0.01)
+                # CORREÇÃO: Usar step 0.01 para garantir casas decimais
+                preco = st.number_input("💰 Preço (R$)*", min_value=0.0, value=29.90, step=0.01, format="%.2f")
                 estoque = st.number_input("📦 Estoque inicial*", min_value=0, value=10)
                 descricao = st.text_area("📄 Descrição", placeholder="Detalhes do produto...")
             
@@ -1291,14 +1303,16 @@ elif menu == "🛒 Vendas":
                                     item_existente['quantidade'] += quantidade
                                     item_existente['subtotal'] = item_existente['quantidade'] * item_existente['preco_unitario']
                                 else:
+                                    # CORREÇÃO: Garantir que o preço seja float
+                                    preco_unitario = float(produto[5])
                                     item = {
                                         'produto_id': produto_id,
                                         'nome': produto[1],
                                         'tamanho': produto[3],
                                         'cor': produto[4],
                                         'quantidade': quantidade,
-                                        'preco_unitario': float(produto[5]),
-                                        'subtotal': float(produto[5]) * quantidade
+                                        'preco_unitario': preco_unitario,
+                                        'subtotal': preco_unitario * quantidade
                                     }
                                     st.session_state.itens_venda.append(item)
                                 
@@ -1576,7 +1590,7 @@ elif menu == "🏭 Produção":
                             
                             itens = cur.fetchall()
                             for item in itens:
-                                st.write(f"- {item[1]} ({item[2]} - {item[3]}) - {item[0]} unidades")
+                                st.write(f"- {item[1]} ({item[2]} - {item[3]}) - {item[0]} unidades - R$ {item[4]:.2f}")
                         finally:
                             conn.close()
                     
@@ -1674,14 +1688,16 @@ elif menu == "🏭 Produção":
                                 item_existente['quantidade'] += quantidade
                                 item_existente['subtotal'] = item_existente['quantidade'] * item_existente['preco_unitario']
                             else:
+                                # CORREÇÃO: Garantir que o preço seja float
+                                preco_unitario = float(produto[5])
                                 item = {
                                     'produto_id': produto_id,
                                     'nome': produto[1],
                                     'tamanho': produto[3],
                                     'cor': produto[4],
                                     'quantidade': quantidade,
-                                    'preco_unitario': float(produto[5]),
-                                    'subtotal': float(produto[5]) * quantidade
+                                    'preco_unitario': preco_unitario,
+                                    'subtotal': preco_unitario * quantidade
                                 }
                                 st.session_state.itens_producao.append(item)
                             
@@ -1864,7 +1880,7 @@ elif menu == "📈 Relatórios":
 
 # Rodapé
 st.sidebar.markdown("---")
-st.sidebar.info("👕 Sistema de Fardamentos v10.0\n\n🏭 **Produção + Vendas Separados**\n🛒 **Verificação de Duplicatas**\n🗄️ Banco SQLite")
+st.sidebar.info("👕 Sistema de Fardamentos v11.0\n\n🏭 **Produção + Vendas Corrigidos**\n💰 **Preços Corretos**\n📦 **Estoque Sincronizado**")
 
 # Botão para recarregar dados
 if st.sidebar.button("🔄 Recarregar Dados"):
