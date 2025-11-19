@@ -6,6 +6,29 @@ import json
 import os
 import hashlib
 import sqlite3
+import time
+from contextlib import contextmanager
+
+# =========================================
+# ⚡ OTIMIZAÇÕES DE PERFORMANCE
+# =========================================
+
+# Cache para consultas frequentes
+@st.cache_data(ttl=300)  # 5 minutos
+def listar_escolas_cached():
+    return listar_escolas()
+
+@st.cache_data(ttl=300)
+def listar_clientes_cached():
+    return listar_clientes()
+
+@st.cache_data(ttl=180)  # 3 minutos
+def listar_produtos_por_escola_cached(escola_id):
+    return listar_produtos_por_escola(escola_id)
+
+@st.cache_data(ttl=120)  # 2 minutos
+def listar_pedidos_por_escola_cached(escola_id=None):
+    return listar_pedidos_por_escola(escola_id)
 
 # =========================================
 # 🔐 SISTEMA DE AUTENTICAÇÃO - SQLITE
@@ -20,15 +43,20 @@ def check_hashes(password, hashed_text):
 def get_connection():
     """Estabelece conexão com SQLite"""
     try:
-        conn = sqlite3.connect('fardamentos.db', check_same_thread=False)
+        conn = sqlite3.connect('fardamentos.db', check_same_thread=False, timeout=30)
         conn.row_factory = sqlite3.Row
+        # Configurações de performance
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA cache_size=10000")
+        conn.execute("PRAGMA foreign_keys=ON")
         return conn
     except Exception as e:
         st.error(f"Erro de conexão com o banco: {str(e)}")
         return None
 
 def init_db():
-    """Inicializa o banco SQLite"""
+    """Inicializa o banco SQLite com índices para performance"""
     conn = get_connection()
     if conn:
         try:
@@ -79,7 +107,7 @@ def init_db():
                     descricao TEXT,
                     escola_id INTEGER REFERENCES escolas(id),
                     data_cadastro TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE(nome, tamanho, cor, escola_id)  -- EVITA PRODUTOS DUPLICADOS
+                    UNIQUE(nome, tamanho, cor, escola_id)
                 )
             ''')
             
@@ -111,6 +139,15 @@ def init_db():
                     subtotal REAL
                 )
             ''')
+            
+            # 🔧 ÍNDICES PARA MELHOR PERFORMANCE
+            cur.execute('CREATE INDEX IF NOT EXISTS idx_produtos_escola ON produtos(escola_id)')
+            cur.execute('CREATE INDEX IF NOT EXISTS idx_produtos_categoria ON produtos(categoria)')
+            cur.execute('CREATE INDEX IF NOT EXISTS idx_pedidos_escola ON pedidos(escola_id)')
+            cur.execute('CREATE INDEX IF NOT EXISTS idx_pedidos_status ON pedidos(status)')
+            cur.execute('CREATE INDEX IF NOT EXISTS idx_pedidos_data ON pedidos(data_pedido)')
+            cur.execute('CREATE INDEX IF NOT EXISTS idx_pedido_itens_pedido ON pedido_itens(pedido_id)')
+            cur.execute('CREATE INDEX IF NOT EXISTS idx_pedido_itens_produto ON pedido_itens(produto_id)')
             
             # Inserir usuários padrão
             usuarios_padrao = [
@@ -269,7 +306,19 @@ def login():
         else:
             st.sidebar.error("Preencha todos os campos")
 
-# Inicializar banco na primeira execução
+# =========================================
+# 🚀 SISTEMA PRINCIPAL
+# =========================================
+
+# Configuração da página (primeira coisa a ser executada)
+st.set_page_config(
+    page_title="Sistema de Fardamentos",
+    page_icon="👕",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Inicialização do banco
 if 'db_initialized' not in st.session_state:
     init_db()
     st.session_state.db_initialized = True
@@ -280,17 +329,6 @@ if 'logged_in' not in st.session_state:
 if not st.session_state.logged_in:
     login()
     st.stop()
-
-# =========================================
-# 🚀 SISTEMA PRINCIPAL
-# =========================================
-
-st.set_page_config(
-    page_title="Sistema de Fardamentos",
-    page_icon="👕",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
 
 # CONFIGURAÇÕES ESPECÍFICAS
 tamanhos_infantil = ["2", "4", "6", "8", "10", "12"]
@@ -939,23 +977,23 @@ st.markdown("---")
 if menu == "📊 Dashboard":
     st.header("🎯 Métricas em Tempo Real")
     
-    # Carregar dados
-    escolas = listar_escolas()
-    clientes = listar_clientes()
+    # Carregar dados usando cache
+    escolas = listar_escolas_cached()
+    clientes = listar_clientes_cached()
     
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
         total_pedidos = 0
         for escola in escolas:
-            pedidos = listar_pedidos_por_escola(escola[0])
+            pedidos = listar_pedidos_por_escola_cached(escola[0])
             total_pedidos += len(pedidos)
         st.metric("Total de Pedidos", total_pedidos)
     
     with col2:
         pedidos_pendentes = 0
         for escola in escolas:
-            pedidos = listar_pedidos_por_escola(escola[0])
+            pedidos = listar_pedidos_por_escola_cached(escola[0])
             pedidos_pendentes += len([p for p in pedidos if p[3] == 'Pendente'])
         st.metric("Pedidos Pendentes", pedidos_pendentes)
     
@@ -965,7 +1003,7 @@ if menu == "📊 Dashboard":
     with col4:
         produtos_baixo_estoque = 0
         for escola in escolas:
-            produtos = listar_produtos_por_escola(escola[0])
+            produtos = listar_produtos_por_escola_cached(escola[0])
             produtos_baixo_estoque += len([p for p in produtos if p[6] < 5])
         st.metric("Alertas de Estoque", produtos_baixo_estoque, delta=-produtos_baixo_estoque)
     
@@ -978,11 +1016,11 @@ if menu == "📊 Dashboard":
             st.subheader(escola[1])
             
             # Pedidos da escola
-            pedidos_escola = listar_pedidos_por_escola(escola[0])
+            pedidos_escola = listar_pedidos_por_escola_cached(escola[0])
             pedidos_pendentes_escola = len([p for p in pedidos_escola if p[3] == 'Pendente'])
             
             # Produtos da escola
-            produtos_escola = listar_produtos_por_escola(escola[0])
+            produtos_escola = listar_produtos_por_escola_cached(escola[0])
             produtos_baixo_estoque_escola = len([p for p in produtos_escola if p[6] < 5])
             
             st.metric("Pedidos", len(pedidos_escola))
@@ -1032,7 +1070,7 @@ elif menu == "👥 Clientes":
     
     with tab2:
         st.header("📋 Clientes Cadastrados")
-        clientes = listar_clientes()
+        clientes = listar_clientes_cached()
         
         if clientes:
             dados = []
@@ -1051,7 +1089,7 @@ elif menu == "👥 Clientes":
     
     with tab3:
         st.header("🗑️ Excluir Cliente")
-        clientes = listar_clientes()
+        clientes = listar_clientes_cached()
         
         if clientes:
             cliente_selecionado = st.selectbox(
@@ -1074,7 +1112,7 @@ elif menu == "👥 Clientes":
             st.info("👥 Nenhum cliente cadastrado")
 
 elif menu == "👕 Produtos":
-    escolas = listar_escolas()
+    escolas = listar_escolas_cached()
     
     if not escolas:
         st.error("❌ Nenhuma escola cadastrada. Cadastre escolas primeiro.")
@@ -1095,7 +1133,7 @@ elif menu == "👕 Produtos":
     
     with tab1:
         # Lista organizada de produtos com busca/filtro
-        produtos = listar_produtos_por_escola(escola_id)
+        produtos = listar_produtos_por_escola_cached(escola_id)
         if produtos:
             # Filtros rápidos
             col1, col2, col3 = st.columns(3)
@@ -1176,7 +1214,7 @@ elif menu == "👕 Produtos":
     
     with tab3:
         # Estatísticas visuais
-        produtos = listar_produtos_por_escola(escola_id)
+        produtos = listar_produtos_por_escola_cached(escola_id)
         if produtos:
             col1, col2, col3 = st.columns(3)
             with col1:
@@ -1205,7 +1243,7 @@ elif menu == "👕 Produtos":
     
     with tab4:
         st.header("🗑️ Excluir Produto")
-        produtos = listar_produtos_por_escola(escola_id)
+        produtos = listar_produtos_por_escola_cached(escola_id)
         
         if produtos:
             produto_selecionado = st.selectbox(
@@ -1230,7 +1268,7 @@ elif menu == "👕 Produtos":
             st.info("📭 Nenhum produto cadastrado para esta escola")
 
 elif menu == "📦 Estoque":
-    escolas = listar_escolas()
+    escolas = listar_escolas_cached()
     
     if not escolas:
         st.error("❌ Nenhuma escola cadastrada. Configure as escolas primeiro.")
@@ -1243,7 +1281,7 @@ elif menu == "📦 Estoque":
         with tabs[idx]:
             st.header(f"📦 Controle de Estoque - {escola[1]}")
             
-            produtos = listar_produtos_por_escola(escola[0])
+            produtos = listar_produtos_por_escola_cached(escola[0])
             
             if produtos:
                 # Métricas da escola
@@ -1309,7 +1347,7 @@ elif menu == "📦 Estoque":
                 st.info(f"📭 Nenhum produto cadastrado para {escola[1]}")
 
 elif menu == "📦 Pedidos":
-    escolas = listar_escolas()
+    escolas = listar_escolas_cached()
     
     if not escolas:
         st.error("❌ Nenhuma escola cadastrada.")
@@ -1325,7 +1363,7 @@ elif menu == "📦 Pedidos":
         escola_id = next(e[0] for e in escolas if e[1] == escola_nome)
         
         # Passo 2: Selecionar Cliente
-        clientes = listar_clientes()
+        clientes = listar_clientes_cached()
         if not clientes:
             st.error("❌ Nenhum cliente cadastrado.")
         else:
@@ -1335,7 +1373,7 @@ elif menu == "📦 Pedidos":
             
             # Passo 3: Adicionar Itens
             st.subheader("🛒 Itens do Pedido")
-            produtos = listar_produtos_por_escola(escola_id)
+            produtos = listar_produtos_por_escola_cached(escola_id)
             
             if not produtos:
                 st.error(f"❌ Nenhum produto cadastrado para {escola_nome}")
@@ -1423,7 +1461,7 @@ elif menu == "📦 Pedidos":
     
     with tab2:
         st.header("📋 Pedidos em Andamento")
-        pedidos = listar_pedidos_por_escola()
+        pedidos = listar_pedidos_por_escola_cached()
         
         if pedidos:
             # Filtrar apenas pedidos não entregues e não cancelados
@@ -1488,7 +1526,7 @@ elif menu == "📦 Pedidos":
     
     with tab3:
         st.header("✅ Pedidos Entregues")
-        pedidos = listar_pedidos_por_escola()
+        pedidos = listar_pedidos_por_escola_cached()
         
         if pedidos:
             # Filtrar apenas pedidos entregues
@@ -1519,7 +1557,7 @@ elif menu == "📦 Pedidos":
     
     with tab4:
         st.header("❌ Pedidos Cancelados")
-        pedidos = listar_pedidos_por_escola()
+        pedidos = listar_pedidos_por_escola_cached()
         
         if pedidos:
             # Filtrar apenas pedidos cancelados
@@ -1557,7 +1595,7 @@ elif menu == "📦 Pedidos":
             st.info("📦 Nenhum pedido realizado")
 
 elif menu == "📈 Relatórios":
-    escolas = listar_escolas()
+    escolas = listar_escolas_cached()
     
     tab1, tab2, tab3 = st.tabs(["📊 Vendas por Escola", "📦 Produtos Mais Vendidos", "👥 Análise Completa"])
     
@@ -1641,14 +1679,14 @@ elif menu == "📈 Relatórios":
             
         with col2:
             st.subheader("👥 Clientes")
-            clientes = listar_clientes()
+            clientes = listar_clientes_cached()
             st.metric("Total de Clientes", len(clientes))
             
         with col3:
             st.subheader("👕 Produtos")
             total_produtos = 0
             for escola in escolas:
-                produtos = listar_produtos_por_escola(escola[0])
+                produtos = listar_produtos_por_escola_cached(escola[0])
                 total_produtos += len(produtos)
             st.metric("Total de Produtos", total_produtos)
         
@@ -1656,8 +1694,8 @@ elif menu == "📈 Relatórios":
         st.subheader("📋 Resumo por Escola")
         resumo_data = []
         for escola in escolas:
-            produtos_escola = listar_produtos_por_escola(escola[0])
-            pedidos_escola = listar_pedidos_por_escola(escola[0])
+            produtos_escola = listar_produtos_por_escola_cached(escola[0])
+            pedidos_escola = listar_pedidos_por_escola_cached(escola[0])
             # Filtrar apenas pedidos não cancelados para as vendas
             pedidos_nao_cancelados = [p for p in pedidos_escola if p[3] != 'Cancelado']
             total_vendas = sum(float(p[9]) for p in pedidos_nao_cancelados)
@@ -1677,10 +1715,41 @@ elif menu == "📈 Relatórios":
                         title='Comparação de Vendas por Escola')
             st.plotly_chart(fig, use_container_width=True)
 
+# =========================================
+# 📊 MONITORAMENTO DE PERFORMANCE
+# =========================================
+
+def monitor_performance():
+    """Função para monitorar performance do sistema"""
+    if 'performance' not in st.session_state:
+        st.session_state.performance = {
+            'inicio': time.time(),
+            'consultas': 0,
+            'atualizacoes': 0
+        }
+    
+    # Exibir métricas de performance no sidebar (apenas para admin)
+    if st.session_state.get('logged_in') and st.session_state.get('tipo_usuario') == 'admin':
+        with st.sidebar.expander("📊 Performance"):
+            tempo_execucao = time.time() - st.session_state.performance['inicio']
+            st.write(f"⏱️ Tempo sessão: {tempo_execucao:.1f}s")
+            st.write(f"📈 Consultas: {st.session_state.performance['consultas']}")
+            st.write(f"✏️ Atualizações: {st.session_state.performance['atualizacoes']}")
+            
+            # Botão para limpar cache
+            if st.button("🔄 Limpar Cache"):
+                st.cache_data.clear()
+                st.success("Cache limpo!")
+                st.rerun()
+
+# Chamar monitoramento
+monitor_performance()
+
 # Rodapé
 st.sidebar.markdown("---")
-st.sidebar.info("👕 Sistema de Fardamentos v11.0\n\n🏫 **Organizado por Escola**\n🗄️ Banco SQLite\n🔄 **Estoque só baixa na entrega**\n🚫 **Produtos únicos por escola**\n📅 **Datas no formato BR**")
+st.sidebar.info("👕 Sistema de Fardamentos v12.0\n\n🏫 **Organizado por Escola**\n🗄️ Banco SQLite\n⚡ **Performance Otimizada**\n🌐 **Pronto para Deploy**")
 
 # Botão para recarregar dados
 if st.sidebar.button("🔄 Recarregar Dados"):
+    st.cache_data.clear()
     st.rerun()
