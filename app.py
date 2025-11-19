@@ -303,6 +303,22 @@ categorias_produtos = ["Camisetas", "Calças/Shorts", "Agasalhos", "Acessórios"
 # 🔧 FUNÇÕES DO BANCO DE DADOS - SQLITE
 # =========================================
 
+# FUNÇÃO PARA FORMATAR DATA NO PADRÃO BRASILEIRO
+def formatar_data_brasil(data_str):
+    """Converte data do formato YYYY-MM-DD para DD/MM/YYYY"""
+    if not data_str:
+        return ""
+    try:
+        if isinstance(data_str, str):
+            data_obj = datetime.strptime(data_str, "%Y-%m-%d")
+            return data_obj.strftime("%d/%m/%Y")
+        elif isinstance(data_str, datetime):
+            return data_str.strftime("%d/%m/%Y")
+        else:
+            return str(data_str)
+    except:
+        return data_str
+
 # FUNÇÕES PARA ESCOLAS
 def listar_escolas():
     conn = get_connection()
@@ -489,6 +505,33 @@ def atualizar_estoque(produto_id, nova_quantidade):
     except Exception as e:
         conn.rollback()
         return False, f"Erro: {str(e)}"
+    finally:
+        conn.close()
+
+def excluir_produto(produto_id):
+    """Exclui um produto se não estiver em nenhum pedido"""
+    conn = get_connection()
+    if not conn:
+        return False, "Erro de conexão"
+    
+    try:
+        cur = conn.cursor()
+        
+        # Verificar se o produto está em algum pedido
+        cur.execute("SELECT COUNT(*) FROM pedido_itens WHERE produto_id = ?", (produto_id,))
+        count = cur.fetchone()[0]
+        
+        if count > 0:
+            return False, "❌ Este produto está em pedidos e não pode ser excluído"
+        
+        # Excluir o produto
+        cur.execute("DELETE FROM produtos WHERE id = ?", (produto_id,))
+        conn.commit()
+        return True, "✅ Produto excluído com sucesso!"
+        
+    except Exception as e:
+        conn.rollback()
+        return False, f"❌ Erro: {str(e)}"
     finally:
         conn.close()
 
@@ -689,7 +732,7 @@ def excluir_pedido(pedido_id):
 # =========================================
 
 def gerar_relatorio_vendas_por_escola(escola_id=None):
-    """Gera relatório de vendas por período e escola"""
+    """Gera relatório de vendas por período e escola (exclui pedidos cancelados)"""
     conn = get_connection()
     if not conn:
         return pd.DataFrame()
@@ -705,7 +748,7 @@ def gerar_relatorio_vendas_por_escola(escola_id=None):
                     SUM(p.quantidade_total) as total_itens,
                     SUM(p.valor_total) as total_vendas
                 FROM pedidos p
-                WHERE p.escola_id = ?
+                WHERE p.escola_id = ? AND p.status != 'Cancelado'
                 GROUP BY DATE(p.data_pedido)
                 ORDER BY data DESC
             ''', (escola_id,))
@@ -719,6 +762,7 @@ def gerar_relatorio_vendas_por_escola(escola_id=None):
                     SUM(p.valor_total) as total_vendas
                 FROM pedidos p
                 JOIN escolas e ON p.escola_id = e.id
+                WHERE p.status != 'Cancelado'
                 GROUP BY DATE(p.data_pedido), e.nome
                 ORDER BY data DESC
             ''')
@@ -730,6 +774,9 @@ def gerar_relatorio_vendas_por_escola(escola_id=None):
                 df = pd.DataFrame(dados, columns=['Data', 'Total Pedidos', 'Total Itens', 'Total Vendas (R$)'])
             else:
                 df = pd.DataFrame(dados, columns=['Data', 'Escola', 'Total Pedidos', 'Total Itens', 'Total Vendas (R$)'])
+            
+            # Formatar data no padrão brasileiro
+            df['Data'] = df['Data'].apply(formatar_data_brasil)
             return df
         else:
             return pd.DataFrame()
@@ -741,7 +788,7 @@ def gerar_relatorio_vendas_por_escola(escola_id=None):
         conn.close()
 
 def gerar_relatorio_produtos_por_escola(escola_id=None):
-    """Gera relatório de produtos mais vendidos por escola"""
+    """Gera relatório de produtos mais vendidos por escola (exclui pedidos cancelados)"""
     conn = get_connection()
     if not conn:
         return pd.DataFrame()
@@ -761,7 +808,7 @@ def gerar_relatorio_produtos_por_escola(escola_id=None):
                 FROM pedido_itens pi
                 JOIN produtos pr ON pi.produto_id = pr.id
                 JOIN pedidos p ON pi.pedido_id = p.id
-                WHERE p.escola_id = ?
+                WHERE p.escola_id = ? AND p.status != 'Cancelado'
                 GROUP BY pr.id, pr.nome, pr.categoria, pr.tamanho, pr.cor
                 ORDER BY total_vendido DESC
             ''', (escola_id,))
@@ -779,6 +826,7 @@ def gerar_relatorio_produtos_por_escola(escola_id=None):
                 JOIN produtos pr ON pi.produto_id = pr.id
                 JOIN pedidos p ON pi.pedido_id = p.id
                 JOIN escolas e ON p.escola_id = e.id
+                WHERE p.status != 'Cancelado'
                 GROUP BY pr.id, pr.nome, pr.categoria, pr.tamanho, pr.cor, e.nome
                 ORDER BY total_vendido DESC
             ''')
@@ -994,7 +1042,7 @@ elif menu == "👥 Clientes":
                     'Nome': cliente[1],
                     'Telefone': cliente[2] or 'N/A',
                     'Email': cliente[3] or 'N/A',
-                    'Data Cadastro': cliente[4]
+                    'Data Cadastro': formatar_data_brasil(cliente[4])
                 })
             
             st.dataframe(pd.DataFrame(dados), use_container_width=True)
@@ -1043,7 +1091,7 @@ elif menu == "👕 Produtos":
     st.header(f"👕 Produtos - {escola_selecionada_nome}")
     
     # Abas para diferentes funcionalidades
-    tab1, tab2, tab3 = st.tabs(["📋 Lista de Produtos", "➕ Cadastrar Novo", "📊 Estatísticas"])
+    tab1, tab2, tab3, tab4 = st.tabs(["📋 Lista de Produtos", "➕ Cadastrar Novo", "📊 Estatísticas", "🗑️ Excluir Produto"])
     
     with tab1:
         # Lista organizada de produtos com busca/filtro
@@ -1076,6 +1124,7 @@ elif menu == "👕 Produtos":
                     with col1:
                         st.write(f"**Categoria:** {produto[2]}")
                         st.write(f"**Descrição:** {produto[7] or 'Sem descrição'}")
+                        st.write(f"**Data Cadastro:** {formatar_data_brasil(produto[9])}")
                     with col2:
                         # Edição rápida de estoque
                         novo_estoque = st.number_input("Estoque:", value=produto[6], min_value=0, key=f"estoque_{produto[0]}")
@@ -1153,6 +1202,32 @@ elif menu == "👕 Produtos":
                 })
                 fig = px.pie(df_categorias, values='Quantidade', names='Categoria', title='Produtos por Categoria')
                 st.plotly_chart(fig, use_container_width=True)
+    
+    with tab4:
+        st.header("🗑️ Excluir Produto")
+        produtos = listar_produtos_por_escola(escola_id)
+        
+        if produtos:
+            produto_selecionado = st.selectbox(
+                "Selecione o produto para excluir:",
+                [f"{p[1]} - {p[3]} - {p[4]} (ID: {p[0]})" for p in produtos]
+            )
+            
+            if produto_selecionado:
+                produto_id = int(produto_selecionado.split("(ID: ")[1].replace(")", ""))
+                
+                st.warning("⚠️ Esta ação não pode ser desfeita!")
+                st.info("ℹ️ Só é possível excluir produtos que não estão em pedidos")
+                
+                if st.button("🗑️ Confirmar Exclusão", type="primary"):
+                    sucesso, msg = excluir_produto(produto_id)
+                    if sucesso:
+                        st.success(msg)
+                        st.rerun()
+                    else:
+                        st.error(msg)
+        else:
+            st.info("📭 Nenhum produto cadastrado para esta escola")
 
 elif menu == "📦 Estoque":
     escolas = listar_escolas()
@@ -1240,7 +1315,7 @@ elif menu == "📦 Pedidos":
         st.error("❌ Nenhuma escola cadastrada.")
         st.stop()
     
-    tab1, tab2, tab3 = st.tabs(["🆕 Novo Pedido", "📋 Pedidos em Andamento", "✅ Pedidos Entregues"])
+    tab1, tab2, tab3, tab4 = st.tabs(["🆕 Novo Pedido", "📋 Pedidos em Andamento", "✅ Pedidos Entregues", "❌ Pedidos Cancelados"])
     
     with tab1:
         st.header("🆕 Criar Novo Pedido")
@@ -1351,16 +1426,15 @@ elif menu == "📦 Pedidos":
         pedidos = listar_pedidos_por_escola()
         
         if pedidos:
-            # Filtrar apenas pedidos não entregues
-            pedidos_em_andamento = [p for p in pedidos if p[3] != 'Entregue']
+            # Filtrar apenas pedidos não entregues e não cancelados
+            pedidos_em_andamento = [p for p in pedidos if p[3] not in ['Entregue', 'Cancelado']]
             
             if pedidos_em_andamento:
                 for pedido in pedidos_em_andamento:
                     status_icon = {
                         'Pendente': '🟡',
                         'Em produção': '🟠', 
-                        'Pronto para entrega': '🔵',
-                        'Cancelado': '🔴'
+                        'Pronto para entrega': '🔵'
                     }.get(pedido[3], '⚪')
                     
                     with st.expander(f"{status_icon} Pedido #{pedido[0]} - {pedido[11]} - {pedido[12]} - R$ {float(pedido[9]):.2f} - {pedido[3]}"):
@@ -1369,8 +1443,8 @@ elif menu == "📦 Pedidos":
                         with col1:
                             st.write(f"**Cliente:** {pedido[11]}")
                             st.write(f"**Escola:** {pedido[12]}")
-                            st.write(f"**Data do Pedido:** {pedido[4]}")
-                            st.write(f"**Entrega Prevista:** {pedido[5]}")
+                            st.write(f"**Data do Pedido:** {formatar_data_brasil(pedido[4])}")
+                            st.write(f"**Entrega Prevista:** {formatar_data_brasil(pedido[5])}")
                         
                         with col2:
                             st.write(f"**Forma de Pagamento:** {pedido[7]}")
@@ -1379,11 +1453,12 @@ elif menu == "📦 Pedidos":
                             if pedido[10]:
                                 st.write(f"**Observações:** {pedido[10]}")
                         
-                        # Atualizar status
-                        col1, col2 = st.columns([2, 1])
+                        # Alterar status do pedido
+                        st.subheader("🔄 Alterar Status do Pedido")
+                        col1, col2, col3 = st.columns([2, 1, 1])
                         with col1:
                             novo_status = st.selectbox(
-                                "Alterar status:",
+                                "Novo status:",
                                 ["Pendente", "Em produção", "Pronto para entrega", "Entregue", "Cancelado"],
                                 key=f"status_{pedido[0]}"
                             )
@@ -1391,6 +1466,16 @@ elif menu == "📦 Pedidos":
                             if st.button("🔄 Atualizar", key=f"upd_{pedido[0]}"):
                                 if novo_status != pedido[3]:
                                     sucesso, msg = atualizar_status_pedido(pedido[0], novo_status)
+                                    if sucesso:
+                                        st.success(msg)
+                                        st.rerun()
+                                    else:
+                                        st.error(msg)
+                        with col3:
+                            if st.button("🗑️ Excluir Pedido", key=f"del_{pedido[0]}"):
+                                st.warning("⚠️ Esta ação não pode ser desfeita!")
+                                if st.button("✅ Confirmar Exclusão", key=f"conf_del_{pedido[0]}"):
+                                    sucesso, msg = excluir_pedido(pedido[0])
                                     if sucesso:
                                         st.success(msg)
                                         st.rerun()
@@ -1417,9 +1502,9 @@ elif menu == "📦 Pedidos":
                         with col1:
                             st.write(f"**Cliente:** {pedido[11]}")
                             st.write(f"**Escola:** {pedido[12]}")
-                            st.write(f"**Data do Pedido:** {pedido[4]}")
-                            st.write(f"**Entrega Prevista:** {pedido[5]}")
-                            st.write(f"**Entregue em:** {pedido[6]}")
+                            st.write(f"**Data do Pedido:** {formatar_data_brasil(pedido[4])}")
+                            st.write(f"**Entrega Prevista:** {formatar_data_brasil(pedido[5])}")
+                            st.write(f"**Entregue em:** {formatar_data_brasil(pedido[6])}")
                         
                         with col2:
                             st.write(f"**Forma de Pagamento:** {pedido[7]}")
@@ -1429,6 +1514,45 @@ elif menu == "📦 Pedidos":
                                 st.write(f"**Observações:** {pedido[10]}")
             else:
                 st.info("✅ Nenhum pedido entregue")
+        else:
+            st.info("📦 Nenhum pedido realizado")
+    
+    with tab4:
+        st.header("❌ Pedidos Cancelados")
+        pedidos = listar_pedidos_por_escola()
+        
+        if pedidos:
+            # Filtrar apenas pedidos cancelados
+            pedidos_cancelados = [p for p in pedidos if p[3] == 'Cancelado']
+            
+            if pedidos_cancelados:
+                for pedido in pedidos_cancelados:
+                    with st.expander(f"❌ Pedido #{pedido[0]} - {pedido[11]} - {pedido[12]} - R$ {float(pedido[9]):.2f}"):
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            st.write(f"**Cliente:** {pedido[11]}")
+                            st.write(f"**Escola:** {pedido[12]}")
+                            st.write(f"**Data do Pedido:** {formatar_data_brasil(pedido[4])}")
+                            st.write(f"**Entrega Prevista:** {formatar_data_brasil(pedido[5])}")
+                        
+                        with col2:
+                            st.write(f"**Forma de Pagamento:** {pedido[7]}")
+                            st.write(f"**Quantidade Total:** {pedido[8]}")
+                            st.write(f"**Valor Total:** R$ {float(pedido[9]):.2f}")
+                            if pedido[10]:
+                                st.write(f"**Observações:** {pedido[10]}")
+                        
+                        # Opção para reativar pedido cancelado
+                        if st.button("🔄 Reativar Pedido", key=f"reativar_{pedido[0]}"):
+                            sucesso, msg = atualizar_status_pedido(pedido[0], "Pendente")
+                            if sucesso:
+                                st.success(msg)
+                                st.rerun()
+                            else:
+                                st.error(msg)
+            else:
+                st.info("❌ Nenhum pedido cancelado")
         else:
             st.info("📦 Nenhum pedido realizado")
 
@@ -1534,12 +1658,14 @@ elif menu == "📈 Relatórios":
         for escola in escolas:
             produtos_escola = listar_produtos_por_escola(escola[0])
             pedidos_escola = listar_pedidos_por_escola(escola[0])
-            total_vendas = sum(float(p[9]) for p in pedidos_escola)
+            # Filtrar apenas pedidos não cancelados para as vendas
+            pedidos_nao_cancelados = [p for p in pedidos_escola if p[3] != 'Cancelado']
+            total_vendas = sum(float(p[9]) for p in pedidos_nao_cancelados)
             
             resumo_data.append({
                 'Escola': escola[1],
                 'Produtos': len(produtos_escola),
-                'Pedidos': len(pedidos_escola),
+                'Pedidos': len(pedidos_nao_cancelados),
                 'Vendas (R$)': total_vendas
             })
         
@@ -1553,7 +1679,7 @@ elif menu == "📈 Relatórios":
 
 # Rodapé
 st.sidebar.markdown("---")
-st.sidebar.info("👕 Sistema de Fardamentos v10.1\n\n🏫 **Organizado por Escola**\n🗄️ Banco SQLite\n🔄 **Estoque só baixa na entrega**\n🚫 **Produtos únicos por escola**")
+st.sidebar.info("👕 Sistema de Fardamentos v11.0\n\n🏫 **Organizado por Escola**\n🗄️ Banco SQLite\n🔄 **Estoque só baixa na entrega**\n🚫 **Produtos únicos por escola**\n📅 **Datas no formato BR**")
 
 # Botão para recarregar dados
 if st.sidebar.button("🔄 Recarregar Dados"):
