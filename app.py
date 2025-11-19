@@ -78,7 +78,8 @@ def init_db():
                     estoque INTEGER DEFAULT 0,
                     descricao TEXT,
                     escola_id INTEGER REFERENCES escolas(id),
-                    data_cadastro TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    data_cadastro TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(nome, tamanho, cor, escola_id)  -- EVITA PRODUTOS DUPLICADOS
                 )
             ''')
             
@@ -396,12 +397,38 @@ def excluir_cliente(cliente_id):
         conn.close()
 
 # FUNÇÕES PARA PRODUTOS
+def verificar_produto_duplicado(nome, tamanho, cor, escola_id):
+    """Verifica se já existe um produto com as mesmas características"""
+    conn = get_connection()
+    if not conn:
+        return True  # Se não conseguiu conectar, assume que existe para evitar duplicação
+    
+    try:
+        cur = conn.cursor()
+        cur.execute('''
+            SELECT COUNT(*) FROM produtos 
+            WHERE nome = ? AND tamanho = ? AND cor = ? AND escola_id = ?
+        ''', (nome, tamanho, cor, escola_id))
+        
+        count = cur.fetchone()[0]
+        return count > 0
+        
+    except Exception as e:
+        st.error(f"Erro ao verificar produto duplicado: {e}")
+        return True
+    finally:
+        conn.close()
+
 def adicionar_produto(nome, categoria, tamanho, cor, preco, estoque, descricao, escola_id):
     conn = get_connection()
     if not conn:
         return False, "Erro de conexão"
     
     try:
+        # Verificar se produto já existe
+        if verificar_produto_duplicado(nome, tamanho, cor, escola_id):
+            return False, "❌ Já existe um produto com este nome, tamanho e cor para esta escola!"
+        
         cur = conn.cursor()
         
         cur.execute('''
@@ -410,10 +437,12 @@ def adicionar_produto(nome, categoria, tamanho, cor, preco, estoque, descricao, 
         ''', (nome, categoria, tamanho, cor, preco, estoque, descricao, escola_id))
         
         conn.commit()
-        return True, "Produto cadastrado com sucesso!"
+        return True, "✅ Produto cadastrado com sucesso!"
+    except sqlite3.IntegrityError:
+        return False, "❌ Erro: Produto duplicado para esta escola!"
     except Exception as e:
         conn.rollback()
-        return False, f"Erro: {str(e)}"
+        return False, f"❌ Erro: {str(e)}"
     finally:
         conn.close()
 
@@ -500,7 +529,7 @@ def adicionar_pedido(cliente_id, escola_id, itens, data_entrega, forma_pagamento
         
         conn.commit()
         
-        mensagem = f"Pedido #{pedido_id} criado com sucesso!"
+        mensagem = f"✅ Pedido #{pedido_id} criado com sucesso!"
         if alertas_estoque:
             mensagem += f" ⚠️ Alertas de estoque: {', '.join(alertas_estoque)}"
             
@@ -508,7 +537,7 @@ def adicionar_pedido(cliente_id, escola_id, itens, data_entrega, forma_pagamento
         
     except Exception as e:
         conn.rollback()
-        return False, f"Erro: {str(e)}"
+        return False, f"❌ Erro: {str(e)}"
     finally:
         conn.close()
 
@@ -544,42 +573,6 @@ def listar_pedidos_por_escola(escola_id=None):
     finally:
         conn.close()
 
-def atualizar_status_pedido(pedido_id, novo_status):
-    conn = get_connection()
-    if not conn:
-        return False, "Erro de conexão"
-    
-    try:
-        cur = conn.cursor()
-        
-        if novo_status == 'Entregue':
-            data_entrega = datetime.now().strftime("%Y-%m-%d")
-            cur.execute('''
-                UPDATE pedidos 
-                SET status = ?, data_entrega_real = ? 
-                WHERE id = ?
-            ''', (novo_status, data_entrega, pedido_id))
-            
-            # Baixar estoque apenas quando pedido for entregue
-            sucesso, msg = baixar_estoque_pedido(pedido_id)
-            if not sucesso:
-                return False, f"Status atualizado, mas erro no estoque: {msg}"
-        else:
-            cur.execute('''
-                UPDATE pedidos 
-                SET status = ? 
-                WHERE id = ?
-            ''', (novo_status, pedido_id))
-        
-        conn.commit()
-        return True, "Status do pedido atualizado com sucesso!"
-        
-    except Exception as e:
-        conn.rollback()
-        return False, f"Erro: {str(e)}"
-    finally:
-        conn.close()
-
 def baixar_estoque_pedido(pedido_id):
     """Baixa o estoque apenas quando o pedido é marcado como entregue"""
     conn = get_connection()
@@ -599,10 +592,14 @@ def baixar_estoque_pedido(pedido_id):
         itens = cur.fetchall()
         
         # Verificar estoque antes de baixar
+        produtos_sem_estoque = []
         for item in itens:
             produto_id, quantidade, nome, estoque_atual = item
             if estoque_atual < quantidade:
-                return False, f"Estoque insuficiente para {nome}. Estoque: {estoque_atual}, Necessário: {quantidade}"
+                produtos_sem_estoque.append(f"{nome} (Estoque: {estoque_atual}, Necessário: {quantidade})")
+        
+        if produtos_sem_estoque:
+            return False, f"Estoque insuficiente para: {', '.join(produtos_sem_estoque)}"
         
         # Baixar estoque
         for item in itens:
@@ -610,11 +607,60 @@ def baixar_estoque_pedido(pedido_id):
             cur.execute("UPDATE produtos SET estoque = estoque - ? WHERE id = ?", (quantidade, produto_id))
         
         conn.commit()
-        return True, "Estoque baixado com sucesso!"
+        return True, "✅ Estoque baixado com sucesso!"
         
     except Exception as e:
         conn.rollback()
-        return False, f"Erro ao baixar estoque: {str(e)}"
+        return False, f"❌ Erro ao baixar estoque: {str(e)}"
+    finally:
+        conn.close()
+
+def atualizar_status_pedido(pedido_id, novo_status):
+    conn = get_connection()
+    if not conn:
+        return False, "Erro de conexão"
+    
+    try:
+        cur = conn.cursor()
+        
+        if novo_status == 'Entregue':
+            data_entrega = datetime.now().strftime("%Y-%m-%d")
+            
+            # Primeiro atualiza o status
+            cur.execute('''
+                UPDATE pedidos 
+                SET status = ?, data_entrega_real = ? 
+                WHERE id = ?
+            ''', (novo_status, data_entrega, pedido_id))
+            
+            conn.commit()  # COMMIT ANTES DE BAIXAR ESTOQUE
+            
+            # Depois baixa o estoque em uma transação separada
+            sucesso, msg = baixar_estoque_pedido(pedido_id)
+            if not sucesso:
+                # Se não conseguiu baixar estoque, reverte o status
+                cur.execute('''
+                    UPDATE pedidos 
+                    SET status = 'Pronto para entrega', data_entrega_real = NULL 
+                    WHERE id = ?
+                ''', (pedido_id,))
+                conn.commit()
+                return False, f"Status não atualizado: {msg}"
+            
+            return True, "✅ Status do pedido atualizado e estoque baixado com sucesso!"
+        else:
+            cur.execute('''
+                UPDATE pedidos 
+                SET status = ? 
+                WHERE id = ?
+            ''', (novo_status, pedido_id))
+            
+            conn.commit()
+            return True, "✅ Status do pedido atualizado com sucesso!"
+        
+    except Exception as e:
+        conn.rollback()
+        return False, f"❌ Erro: {str(e)}"
     finally:
         conn.close()
 
@@ -1023,7 +1069,9 @@ elif menu == "👕 Produtos":
             
             # Exibir produtos
             for produto in produtos_filtrados:
-                with st.expander(f"{produto[1]} - {produto[3]} - {produto[4]} | Estoque: {produto[6]} | R$ {produto[5]:.2f}"):
+                status_estoque = "✅" if produto[6] >= 10 else "⚠️" if produto[6] >= 5 else "❌"
+                
+                with st.expander(f"{status_estoque} {produto[1]} - {produto[3]} - {produto[4]} | Estoque: {produto[6]} | R$ {produto[5]:.2f}"):
                     col1, col2 = st.columns([3,1])
                     with col1:
                         st.write(f"**Categoria:** {produto[2]}")
@@ -1032,38 +1080,50 @@ elif menu == "👕 Produtos":
                         # Edição rápida de estoque
                         novo_estoque = st.number_input("Estoque:", value=produto[6], min_value=0, key=f"estoque_{produto[0]}")
                         if st.button("💾 Atualizar", key=f"btn_{produto[0]}"):
-                            sucesso, msg = atualizar_estoque(produto[0], novo_estoque)
-                            if sucesso:
-                                st.success("Estoque atualizado!")
-                                st.rerun()
+                            if novo_estoque != produto[6]:
+                                sucesso, msg = atualizar_estoque(produto[0], novo_estoque)
+                                if sucesso:
+                                    st.success(msg)
+                                    st.rerun()
+                                else:
+                                    st.error(msg)
+                            else:
+                                st.info("Quantidade não foi alterada")
         else:
-            st.info("Nenhum produto cadastrado para esta escola")
+            st.info("📭 Nenhum produto cadastrado para esta escola")
     
     with tab2:
         # Formulário simplificado de cadastro
         with st.form("novo_produto_form", clear_on_submit=True):
-            st.subheader("Cadastrar Novo Produto")
+            st.subheader("➕ Cadastrar Novo Produto")
             
             col1, col2 = st.columns(2)
             with col1:
-                nome = st.text_input("Nome do Produto*", placeholder="Ex: Camiseta Polo")
-                categoria = st.selectbox("Categoria*", categorias_produtos)
-                tamanho = st.selectbox("Tamanho*", todos_tamanhos)
+                nome = st.text_input("📝 Nome do Produto*", placeholder="Ex: Camiseta Polo")
+                categoria = st.selectbox("📂 Categoria*", categorias_produtos)
+                tamanho = st.selectbox("📏 Tamanho*", todos_tamanhos)
             with col2:
-                cor = st.text_input("Cor*", value="Branco")
-                preco = st.number_input("Preço (R$)*", min_value=0.0, value=29.90, step=0.01)
-                estoque = st.number_input("Estoque Inicial*", min_value=0, value=10)
+                cor = st.text_input("🎨 Cor*", value="Branco", placeholder="Ex: Azul Marinho")
+                preco = st.number_input("💰 Preço (R$)*", min_value=0.0, value=29.90, step=0.01)
+                estoque = st.number_input("📦 Estoque Inicial*", min_value=0, value=10)
             
-            descricao = st.text_area("Descrição (opcional)")
+            descricao = st.text_area("📄 Descrição (opcional)", placeholder="Detalhes do produto...")
             
             if st.form_submit_button("✅ Cadastrar Produto", type="primary"):
                 if nome and cor:
-                    sucesso, msg = adicionar_produto(nome, categoria, tamanho, cor, preco, estoque, descricao, escola_id)
-                    if sucesso:
-                        st.success(msg)
-                        st.balloons()
+                    # Verificar duplicação antes de tentar cadastrar
+                    if verificar_produto_duplicado(nome, tamanho, cor, escola_id):
+                        st.error("❌ Já existe um produto com este nome, tamanho e cor para esta escola!")
                     else:
-                        st.error(msg)
+                        sucesso, msg = adicionar_produto(nome, categoria, tamanho, cor, preco, estoque, descricao, escola_id)
+                        if sucesso:
+                            st.success(msg)
+                            st.balloons()
+                            st.rerun()
+                        else:
+                            st.error(msg)
+                else:
+                    st.error("❌ Campos obrigatórios: Nome e Cor")
     
     with tab3:
         # Estatísticas visuais
@@ -1131,7 +1191,9 @@ elif menu == "📦 Estoque":
                 st.subheader("📋 Ajuste de Estoque")
                 
                 for produto in produtos:
-                    with st.expander(f"{produto[1]} - {produto[3]} - {produto[4]} (Estoque: {produto[6]})"):
+                    status_estoque = "✅" if produto[6] >= 10 else "⚠️" if produto[6] >= 5 else "❌"
+                    
+                    with st.expander(f"{status_estoque} {produto[1]} - {produto[3]} - {produto[4]} (Estoque: {produto[6]})"):
                         col1, col2, col3 = st.columns([2, 1, 1])
                         
                         with col1:
@@ -1165,10 +1227,11 @@ elif menu == "📦 Estoque":
                 if produtos_alerta:
                     st.subheader("🚨 Alertas de Estoque Baixo")
                     for produto in produtos_alerta:
-                        st.warning(f"**{produto[1]} - {produto[3]} - {produto[4]}**: Apenas {produto[6]} unidades em estoque")
+                        status = "⚠️" if produto[6] > 0 else "❌"
+                        st.warning(f"{status} **{produto[1]} - {produto[3]} - {produto[4]}**: Apenas {produto[6]} unidades em estoque")
             
             else:
-                st.info(f"👕 Nenhum produto cadastrado para {escola[1]}")
+                st.info(f"📭 Nenhum produto cadastrado para {escola[1]}")
 
 elif menu == "📦 Pedidos":
     escolas = listar_escolas()
@@ -1229,7 +1292,7 @@ elif menu == "📦 Pedidos":
                             'subtotal': preco_unit * qtd
                         }
                         st.session_state.itens_pedido.append(item)
-                        st.success("Item adicionado!")
+                        st.success("✅ Item adicionado!")
                         st.rerun()
                 
                 # Mostrar itens do pedido
@@ -1255,7 +1318,7 @@ elif menu == "📦 Pedidos":
                         
                         total += item['subtotal']
                     
-                    st.success(f"**💰 Total: R$ {total:.2f}**")
+                    st.success(f"**💰 Total do Pedido: R$ {total:.2f}**")
                     
                     # Informações finais do pedido
                     col1, col2 = st.columns(2)
@@ -1266,17 +1329,22 @@ elif menu == "📦 Pedidos":
                         observacoes = st.text_area("📝 Observações")
                     
                     if st.button("✅ Finalizar Pedido", type="primary", use_container_width=True):
-                        sucesso, resultado = adicionar_pedido(
-                            cliente_id, escola_id, st.session_state.itens_pedido, 
-                            data_entrega, forma_pagamento, observacoes
-                        )
-                        if sucesso:
-                            st.success(f"Pedido criado! {resultado}")
-                            del st.session_state.itens_pedido
-                            st.balloons()
-                            st.rerun()
+                        if st.session_state.itens_pedido:
+                            sucesso, resultado = adicionar_pedido(
+                                cliente_id, escola_id, st.session_state.itens_pedido, 
+                                data_entrega, forma_pagamento, observacoes
+                            )
+                            if sucesso:
+                                st.success(f"✅ {resultado}")
+                                del st.session_state.itens_pedido
+                                st.balloons()
+                                st.rerun()
+                            else:
+                                st.error(f"❌ {resultado}")
                         else:
-                            st.error(f"Erro: {resultado}")
+                            st.error("❌ Adicione pelo menos um item ao pedido!")
+                else:
+                    st.info("🛒 Adicione itens ao pedido usando o botão 'Adicionar Item'")
     
     with tab2:
         st.header("📋 Pedidos em Andamento")
@@ -1288,7 +1356,14 @@ elif menu == "📦 Pedidos":
             
             if pedidos_em_andamento:
                 for pedido in pedidos_em_andamento:
-                    with st.expander(f"Pedido #{pedido[0]} - {pedido[11]} - {pedido[12]} - R$ {float(pedido[9]):.2f} - Status: {pedido[3]}"):
+                    status_icon = {
+                        'Pendente': '🟡',
+                        'Em produção': '🟠', 
+                        'Pronto para entrega': '🔵',
+                        'Cancelado': '🔴'
+                    }.get(pedido[3], '⚪')
+                    
+                    with st.expander(f"{status_icon} Pedido #{pedido[0]} - {pedido[11]} - {pedido[12]} - R$ {float(pedido[9]):.2f} - {pedido[3]}"):
                         col1, col2 = st.columns(2)
                         
                         with col1:
@@ -1336,7 +1411,7 @@ elif menu == "📦 Pedidos":
             
             if pedidos_entregues:
                 for pedido in pedidos_entregues:
-                    with st.expander(f"Pedido #{pedido[0]} - {pedido[11]} - {pedido[12]} - R$ {float(pedido[9]):.2f}"):
+                    with st.expander(f"✅ Pedido #{pedido[0]} - {pedido[11]} - {pedido[12]} - R$ {float(pedido[9]):.2f}"):
                         col1, col2 = st.columns(2)
                         
                         with col1:
@@ -1478,7 +1553,7 @@ elif menu == "📈 Relatórios":
 
 # Rodapé
 st.sidebar.markdown("---")
-st.sidebar.info("👕 Sistema de Fardamentos v10.0\n\n🏫 **Organizado por Escola**\n🗄️ Banco SQLite\n🔄 **Estoque só baixa na entrega**")
+st.sidebar.info("👕 Sistema de Fardamentos v10.1\n\n🏫 **Organizado por Escola**\n🗄️ Banco SQLite\n🔄 **Estoque só baixa na entrega**\n🚫 **Produtos únicos por escola**")
 
 # Botão para recarregar dados
 if st.sidebar.button("🔄 Recarregar Dados"):
